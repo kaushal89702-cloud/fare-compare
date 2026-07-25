@@ -25,7 +25,8 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.withTimeoutOrNull
 import javax.inject.Inject
 
-private const val FOREGROUND_WAIT_TIMEOUT_MS = 10_000L
+private const val FOREGROUND_WAIT_TIMEOUT_MS = 20_000L
+private const val LAUNCH_RETRY_SETTLE_MS = 1_000L
 private const val FIELD_APPEAR_TIMEOUT_MS = 12_000L
 private const val CONFIRM_APPEAR_TIMEOUT_MS = 6_000L
 private const val FARE_APPEAR_TIMEOUT_MS = 30_000L
@@ -110,10 +111,29 @@ class RideAutomationEngine @Inject constructor(
             }
 
             emit(progress(provider, AutomationState.WAIT_APP, "Launching ${provider.displayName}..."))
+            log(provider, AutomationState.WAIT_APP, "launch() called, waiting up to ${FOREGROUND_WAIT_TIMEOUT_MS}ms for foreground (attempt 1)")
             provider.launch()
 
-            log(provider, AutomationState.WAIT_APP, "Waiting for ${provider.displayName} to reach foreground")
-            if (!provider.waitUntilForeground(FOREGROUND_WAIT_TIMEOUT_MS)) {
+            var reachedForeground = provider.waitUntilForeground(FOREGROUND_WAIT_TIMEOUT_MS)
+            if (!reachedForeground) {
+                // A cold app start can genuinely take longer than expected,
+                // and a launch Intent fired right after switching away from
+                // another app can occasionally be dropped by the system.
+                // One retry with a short settle beforehand covers both
+                // without masking a real, persistent failure.
+                log(provider, AutomationState.WAIT_APP, "First foreground wait timed out, retrying launch once")
+                emit(progress(provider, AutomationState.WAIT_APP, "Retrying launch of ${provider.displayName}..."))
+                delay(LAUNCH_RETRY_SETTLE_MS)
+                provider.launch()
+                reachedForeground = provider.waitUntilForeground(FOREGROUND_WAIT_TIMEOUT_MS)
+            }
+
+            if (!reachedForeground) {
+                val actualForegroundPackage = accessibilityGatewayRepository.currentRootNode()
+                    ?.packageName?.toString()
+                lastDiagnosticsSummary = "Gave up waiting for ${provider.displayName} (${provider.packageName}) " +
+                    "after 2 launch attempts. Foreground app at timeout: ${actualForegroundPackage ?: "unknown"}."
+                log(provider, AutomationState.WAIT_APP, lastDiagnosticsSummary!!)
                 emit(fail(provider, AutomationFailureReason.LaunchTimeout))
                 return@flow
             }
