@@ -20,6 +20,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
@@ -43,6 +44,8 @@ fun HomeScreen(
         uiState = uiState,
         onPickupChanged = viewModel::onPickupChanged,
         onDestinationChanged = viewModel::onDestinationChanged,
+        onPickupFocusLost = viewModel::onPickupFocusLost,
+        onDestinationFocusLost = viewModel::onDestinationFocusLost,
         onCompareClicked = viewModel::onCompareClicked
     )
 }
@@ -52,6 +55,8 @@ private fun HomeScreenContent(
     uiState: HomeUiState,
     onPickupChanged: (String) -> Unit,
     onDestinationChanged: (String) -> Unit,
+    onPickupFocusLost: () -> Unit,
+    onDestinationFocusLost: () -> Unit,
     onCompareClicked: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -71,23 +76,44 @@ private fun HomeScreenContent(
         OutlinedTextField(
             value = uiState.pickup,
             onValueChange = onPickupChanged,
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .onFocusChanged { focusState ->
+                    if (!focusState.isFocused) onPickupFocusLost()
+                },
             label = { Text(stringResource(R.string.pickup_label)) },
             singleLine = true,
+            isError = uiState.isPickupError,
+            supportingText = {
+                if (uiState.isPickupError) {
+                    Text(stringResource(R.string.pickup_required))
+                }
+            },
             shape = RoundedCornerShape(16.dp)
         )
 
         OutlinedTextField(
             value = uiState.destination,
             onValueChange = onDestinationChanged,
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .onFocusChanged { focusState ->
+                    if (!focusState.isFocused) onDestinationFocusLost()
+                },
             label = { Text(stringResource(R.string.destination_label)) },
             singleLine = true,
+            isError = uiState.isDestinationError,
+            supportingText = {
+                if (uiState.isDestinationError) {
+                    Text(stringResource(R.string.destination_required))
+                }
+            },
             shape = RoundedCornerShape(16.dp)
         )
 
         Button(
             onClick = onCompareClicked,
+            enabled = uiState.isCompareEnabled,
             modifier = Modifier
                 .fillMaxWidth()
                 .height(56.dp),
@@ -140,6 +166,8 @@ private fun HomeScreenPreviewLight() {
                 uiState = HomeUiState(),
                 onPickupChanged = {},
                 onDestinationChanged = {},
+                onPickupFocusLost = {},
+                onDestinationFocusLost = {},
                 onCompareClicked = {}
             )
         }
@@ -159,6 +187,8 @@ private fun HomeScreenPreviewDark() {
                 ),
                 onPickupChanged = {},
                 onDestinationChanged = {},
+                onPickupFocusLost = {},
+                onDestinationFocusLost = {},
                 onCompareClicked = {}
             )
         }

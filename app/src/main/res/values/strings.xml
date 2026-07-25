@@ -6,4 +6,6 @@
     <string name="destination_label">Destination</string>
     <string name="compare_button">Compare Fares</string>
     <string name="fare_placeholder">--</string>
+    <string name="pickup_required">Pickup is required</string>
+    <string name="destination_required">Destination is required</string>
 </resources>

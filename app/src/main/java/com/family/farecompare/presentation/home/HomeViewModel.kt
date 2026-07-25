@@ -22,7 +22,16 @@ class HomeViewModel @Inject constructor() : ViewModel() {
         _uiState.update { it.copy(destination = value) }
     }
 
+    fun onPickupFocusLost() {
+        _uiState.update { it.copy(isPickupTouched = true) }
+    }
+
+    fun onDestinationFocusLost() {
+        _uiState.update { it.copy(isDestinationTouched = true) }
+    }
+
     fun onCompareClicked() {
-        // Implemented in a later phase (input validation + automation).
+        // Implemented in a later phase (automation). Input validity is already
+        // enforced by disabling the button, so this is only reachable when valid.
     }
 }
