@@ -64,6 +64,8 @@ dependencies {
     implementation(libs.lifecycle.viewmodel.compose)
     implementation(libs.lifecycle.runtime.compose)
     implementation(libs.kotlinx.coroutines.android)
+    implementation(libs.navigation.compose)
+    implementation(libs.material.icons.core)
 
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)

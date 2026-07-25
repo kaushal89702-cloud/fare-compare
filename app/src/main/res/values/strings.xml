@@ -8,4 +8,12 @@
     <string name="fare_placeholder">--</string>
     <string name="pickup_required">Pickup is required</string>
     <string name="destination_required">Destination is required</string>
+    <string name="settings_title">Settings</string>
+    <string name="back">Back</string>
+    <string name="settings_icon">Settings</string>
+    <string name="accessibility_enabled_status">🟢 Accessibility Enabled</string>
+    <string name="accessibility_disabled_status">🔴 Accessibility Disabled</string>
+    <string name="accessibility_settings_description">Fare Compare needs the Accessibility Service enabled to read fares from Uber, Ola, and Rapido on your device.</string>
+    <string name="enable_accessibility_button">Enable Accessibility Service</string>
+    <string name="accessibility_service_description">Allows Fare Compare to read ride fare information from Uber, Ola, and Rapido once enabled in Accessibility Settings.</string>
 </resources>

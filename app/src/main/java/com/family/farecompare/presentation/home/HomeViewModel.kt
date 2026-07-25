@@ -1,6 +1,7 @@
 package com.family.farecompare.presentation.home
 
 import androidx.lifecycle.ViewModel
+import com.family.farecompare.domain.accessibility.AccessibilityStatusChecker
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -9,10 +10,22 @@ import kotlinx.coroutines.flow.update
 import javax.inject.Inject
 
 @HiltViewModel
-class HomeViewModel @Inject constructor() : ViewModel() {
+class HomeViewModel @Inject constructor(
+    private val accessibilityStatusChecker: AccessibilityStatusChecker
+) : ViewModel() {
 
     private val _uiState = MutableStateFlow(HomeUiState())
     val uiState: StateFlow<HomeUiState> = _uiState.asStateFlow()
+
+    init {
+        refreshAccessibilityStatus()
+    }
+
+    fun refreshAccessibilityStatus() {
+        _uiState.update {
+            it.copy(isAccessibilityEnabled = accessibilityStatusChecker.isServiceEnabled())
+        }
+    }
 
     fun onPickupChanged(value: String) {
         _uiState.update { it.copy(pickup = value) }

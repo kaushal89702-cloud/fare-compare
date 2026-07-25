@@ -12,13 +12,18 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.res.stringResource
@@ -30,15 +35,20 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.family.farecompare.R
 import com.family.farecompare.domain.model.FareResult
 import com.family.farecompare.domain.model.RideProvider
+import com.family.farecompare.presentation.common.OnResume
 import com.family.farecompare.presentation.components.FareResultCard
 import com.family.farecompare.presentation.theme.FareCompareTheme
 
 @Composable
 fun HomeScreen(
+    onSettingsClick: () -> Unit,
     modifier: Modifier = Modifier,
     viewModel: HomeViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+
+    OnResume { viewModel.refreshAccessibilityStatus() }
+
     HomeScreenContent(
         modifier = modifier,
         uiState = uiState,
@@ -46,7 +56,8 @@ fun HomeScreen(
         onDestinationChanged = viewModel::onDestinationChanged,
         onPickupFocusLost = viewModel::onPickupFocusLost,
         onDestinationFocusLost = viewModel::onDestinationFocusLost,
-        onCompareClicked = viewModel::onCompareClicked
+        onCompareClicked = viewModel::onCompareClicked,
+        onSettingsClick = onSettingsClick
     )
 }
 
@@ -58,6 +69,7 @@ private fun HomeScreenContent(
     onPickupFocusLost: () -> Unit,
     onDestinationFocusLost: () -> Unit,
     onCompareClicked: () -> Unit,
+    onSettingsClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -67,10 +79,31 @@ private fun HomeScreenContent(
             .padding(horizontal = 24.dp, vertical = 32.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = stringResource(R.string.home_title),
+                style = MaterialTheme.typography.headlineLarge,
+                fontWeight = FontWeight.Bold
+            )
+            IconButton(onClick = onSettingsClick) {
+                Icon(
+                    imageVector = Icons.Filled.Settings,
+                    contentDescription = stringResource(R.string.settings_icon)
+                )
+            }
+        }
+
         Text(
-            text = stringResource(R.string.home_title),
-            style = MaterialTheme.typography.headlineLarge,
-            fontWeight = FontWeight.Bold
+            text = if (uiState.isAccessibilityEnabled) {
+                stringResource(R.string.accessibility_enabled_status)
+            } else {
+                stringResource(R.string.accessibility_disabled_status)
+            },
+            style = MaterialTheme.typography.bodyMedium
         )
 
         OutlinedTextField(
@@ -168,7 +201,8 @@ private fun HomeScreenPreviewLight() {
                 onDestinationChanged = {},
                 onPickupFocusLost = {},
                 onDestinationFocusLost = {},
-                onCompareClicked = {}
+                onCompareClicked = {},
+                onSettingsClick = {}
             )
         }
     }
@@ -183,13 +217,15 @@ private fun HomeScreenPreviewDark() {
                 uiState = HomeUiState(
                     pickup = "Koramangala",
                     destination = "Whitefield",
+                    isAccessibilityEnabled = true,
                     fareResults = RideProvider.values().map { FareResult(provider = it) }
                 ),
                 onPickupChanged = {},
                 onDestinationChanged = {},
                 onPickupFocusLost = {},
                 onDestinationFocusLost = {},
-                onCompareClicked = {}
+                onCompareClicked = {},
+                onSettingsClick = {}
             )
         }
     }

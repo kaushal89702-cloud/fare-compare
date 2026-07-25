@@ -6,8 +6,13 @@ import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.rememberNavController
 import com.family.farecompare.presentation.home.HomeScreen
+import com.family.farecompare.presentation.settings.SettingsScreen
 import com.family.farecompare.presentation.theme.FareCompareTheme
 import dagger.hilt.android.AndroidEntryPoint
 
@@ -21,9 +26,27 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    HomeScreen()
+                    FareCompareNavHost()
                 }
             }
+        }
+    }
+}
+
+private object FareCompareDestinations {
+    const val HOME = "home"
+    const val SETTINGS = "settings"
+}
+
+@Composable
+private fun FareCompareNavHost() {
+    val navController = rememberNavController()
+    NavHost(navController = navController, startDestination = FareCompareDestinations.HOME) {
+        composable(FareCompareDestinations.HOME) {
+            HomeScreen(onSettingsClick = { navController.navigate(FareCompareDestinations.SETTINGS) })
+        }
+        composable(FareCompareDestinations.SETTINGS) {
+            SettingsScreen(onBackClick = { navController.popBackStack() })
         }
     }
 }

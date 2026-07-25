@@ -8,6 +8,7 @@ data class HomeUiState(
     val destination: String = "",
     val isPickupTouched: Boolean = false,
     val isDestinationTouched: Boolean = false,
+    val isAccessibilityEnabled: Boolean = false,
     val fareResults: List<FareResult> = RideProvider.values().map { FareResult(provider = it) }
 ) {
     val isPickupError: Boolean get() = isPickupTouched && pickup.isBlank()
