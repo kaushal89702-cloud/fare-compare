@@ -7,9 +7,9 @@ import com.family.farecompare.R
 import com.family.farecompare.domain.accessibility.AccessibilityStatusChecker
 import com.family.farecompare.domain.automation.AutomationStep
 import com.family.farecompare.domain.automation.LaunchRideAppUseCase
+import com.family.farecompare.domain.automation.RideAppProvider
 import com.family.farecompare.domain.common.ResourceProvider
 import com.family.farecompare.domain.foreground.ForegroundAppRepository
-import com.family.farecompare.domain.model.RideProvider
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -28,8 +28,13 @@ class HomeViewModel @Inject constructor(
     private val accessibilityStatusChecker: AccessibilityStatusChecker,
     private val launchRideAppUseCase: LaunchRideAppUseCase,
     private val resourceProvider: ResourceProvider,
+    rideAppProviders: Set<@JvmSuppressWildcards RideAppProvider>,
     foregroundAppRepository: ForegroundAppRepository
 ) : ViewModel() {
+
+    // Phase 6 supports Uber only. Ola/Rapido will be added to
+    // AutomationModule in later phases without touching this ViewModel.
+    private val uberProvider: RideAppProvider = rideAppProviders.first { it.packageName == "com.ubercab" }
 
     private val _uiState = MutableStateFlow(HomeUiState())
     val uiState: StateFlow<HomeUiState> = _uiState.asStateFlow()
@@ -70,77 +75,105 @@ class HomeViewModel @Inject constructor(
     }
 
     fun onCompareClicked() {
-        Log.d(TAG, "Compare button pressed")
-
-        if (!accessibilityStatusChecker.isServiceEnabled()) {
-            Log.w(TAG, "Accessibility Service Required")
-            viewModelScope.launch {
-                _snackbarEvents.emit(resourceProvider.getString(R.string.message_accessibility_required))
-            }
-            return
-        }
-
+        Log.d(TAG, "Compare pressed")
         viewModelScope.launch {
-            launchRideAppUseCase(RideProvider.UBER).collect { step -> handleAutomationStep(step) }
+            Log.d(TAG, "Checking provider: ${uberProvider.displayName}")
+            launchRideAppUseCase(uberProvider).collect { step -> handleAutomationStep(step) }
         }
     }
 
     private suspend fun handleAutomationStep(step: AutomationStep) {
-        val provider = RideProvider.UBER
+        val providerName = uberProvider.displayName
         when (step) {
+            AutomationStep.CheckingAccessibility -> {
+                _uiState.update {
+                    it.copy(automationStatusText = resourceProvider.getString(R.string.automation_status_checking_accessibility))
+                }
+            }
+
+            AutomationStep.AccessibilityDisabled -> {
+                Log.w(TAG, "Accessibility Service Required")
+                refreshAccessibilityStatus()
+                _uiState.update {
+                    it.copy(automationStatusText = resourceProvider.getString(R.string.automation_status_idle))
+                }
+                _snackbarEvents.emit(resourceProvider.getString(R.string.message_accessibility_required))
+            }
+
+            AutomationStep.CheckingInstalled -> {
+                _uiState.update {
+                    it.copy(
+                        automationStatusText = resourceProvider.getString(
+                            R.string.automation_status_checking_installed,
+                            providerName
+                        )
+                    )
+                }
+            }
+
             AutomationStep.NotInstalled -> {
-                Log.w(TAG, "${provider.displayName} is not installed")
+                Log.w(TAG, "$providerName is not installed")
                 _uiState.update {
                     it.copy(automationStatusText = resourceProvider.getString(R.string.automation_status_idle))
                 }
                 _snackbarEvents.emit(
-                    resourceProvider.getString(R.string.message_app_not_installed, provider.displayName)
+                    resourceProvider.getString(R.string.message_app_not_installed, providerName)
                 )
             }
 
             AutomationStep.Launching -> {
-                Log.d(TAG, "Launching ${provider.displayName}")
+                Log.d(TAG, "Launching $providerName")
                 _uiState.update {
                     it.copy(
                         automationStatusText = resourceProvider.getString(
                             R.string.automation_status_launching,
-                            provider.displayName
+                            providerName
                         )
                     )
                 }
             }
 
             AutomationStep.Waiting -> {
-                Log.d(TAG, "Waiting for ${provider.displayName}")
+                Log.d(TAG, "Waiting for $providerName (foreground events)")
                 _uiState.update {
                     it.copy(
                         automationStatusText = resourceProvider.getString(
                             R.string.automation_status_waiting,
-                            provider.displayName
+                            providerName
                         )
                     )
                 }
             }
 
             AutomationStep.Success -> {
-                Log.d(TAG, "${provider.displayName} opened")
+                Log.d(TAG, "Foreground changed: $providerName opened")
                 _uiState.update {
                     it.copy(
                         automationStatusText = resourceProvider.getString(
                             R.string.automation_status_success,
-                            provider.displayName
+                            providerName
                         )
                     )
                 }
             }
 
             AutomationStep.Timeout -> {
-                Log.w(TAG, "Launch timeout for ${provider.displayName}")
+                Log.w(TAG, "Timeout waiting for $providerName")
                 _uiState.update {
                     it.copy(automationStatusText = resourceProvider.getString(R.string.automation_status_failed))
                 }
                 _snackbarEvents.emit(
-                    resourceProvider.getString(R.string.message_unable_to_launch, provider.displayName)
+                    resourceProvider.getString(R.string.message_unable_to_launch, providerName)
+                )
+            }
+
+            is AutomationStep.UnexpectedError -> {
+                Log.e(TAG, "Unexpected error launching $providerName: ${step.message}")
+                _uiState.update {
+                    it.copy(automationStatusText = resourceProvider.getString(R.string.automation_status_failed))
+                }
+                _snackbarEvents.emit(
+                    resourceProvider.getString(R.string.message_unable_to_launch, providerName)
                 )
             }
         }
