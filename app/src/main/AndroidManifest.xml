@@ -13,6 +13,12 @@
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
 
+    <!-- Legacy fallback for exporting the UI Inspector dump on Android 9
+         and below; MediaStore is used on Android 10+ instead. -->
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
+
     <application
         android:name=".FareCompareApp"
         android:allowBackup="true"

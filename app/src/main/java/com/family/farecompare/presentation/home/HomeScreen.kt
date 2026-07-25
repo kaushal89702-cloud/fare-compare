@@ -13,6 +13,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -51,6 +52,7 @@ import com.family.farecompare.presentation.theme.FareCompareTheme
 @Composable
 fun HomeScreen(
     onSettingsClick: () -> Unit,
+    onInspectorClick: () -> Unit,
     modifier: Modifier = Modifier,
     viewModel: HomeViewModel = hiltViewModel()
 ) {
@@ -77,7 +79,8 @@ fun HomeScreen(
             onPickupFocusLost = viewModel::onPickupFocusLost,
             onDestinationFocusLost = viewModel::onDestinationFocusLost,
             onCompareClicked = viewModel::onCompareClicked,
-            onSettingsClick = onSettingsClick
+            onSettingsClick = onSettingsClick,
+            onInspectorClick = onInspectorClick
         )
     }
 }
@@ -91,6 +94,7 @@ private fun HomeScreenContent(
     onDestinationFocusLost: () -> Unit,
     onCompareClicked: () -> Unit,
     onSettingsClick: () -> Unit,
+    onInspectorClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -110,11 +114,19 @@ private fun HomeScreenContent(
                 style = MaterialTheme.typography.headlineLarge,
                 fontWeight = FontWeight.Bold
             )
-            IconButton(onClick = onSettingsClick) {
-                Icon(
-                    imageVector = Icons.Filled.Settings,
-                    contentDescription = stringResource(R.string.settings_icon)
-                )
+            Row {
+                IconButton(onClick = onInspectorClick) {
+                    Icon(
+                        imageVector = Icons.Filled.Search,
+                        contentDescription = "UI Inspector"
+                    )
+                }
+                IconButton(onClick = onSettingsClick) {
+                    Icon(
+                        imageVector = Icons.Filled.Settings,
+                        contentDescription = stringResource(R.string.settings_icon)
+                    )
+                }
             }
         }
 
@@ -233,7 +245,8 @@ private fun HomeScreenPreviewLight() {
                 onPickupFocusLost = {},
                 onDestinationFocusLost = {},
                 onCompareClicked = {},
-                onSettingsClick = {}
+                onSettingsClick = {},
+                onInspectorClick = {}
             )
         }
     }
@@ -257,7 +270,8 @@ private fun HomeScreenPreviewDark() {
                 onPickupFocusLost = {},
                 onDestinationFocusLost = {},
                 onCompareClicked = {},
-                onSettingsClick = {}
+                onSettingsClick = {},
+                onInspectorClick = {}
             )
         }
     }

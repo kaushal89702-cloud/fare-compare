@@ -4,6 +4,7 @@ import android.accessibilityservice.AccessibilityService
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import com.family.farecompare.data.foreground.ForegroundAppNameResolver
+import com.family.farecompare.domain.inspector.UiInspectorCoordinator
 import com.family.farecompare.domain.location.PickupDetectionCoordinator
 import com.family.farecompare.domain.foreground.ForegroundAppRepository
 import com.family.farecompare.domain.model.ForegroundApp
@@ -23,9 +24,13 @@ import javax.inject.Inject
  * 2. When a known ride provider (Uber, Ola, Rapido) is in the foreground,
  *    hands its window content to [PickupDetectionCoordinator] so it can
  *    locate and score the pickup location field (Phase 7).
+ * 3. When Uber specifically is in the foreground, hands its window content
+ *    to [UiInspectorCoordinator] for the developer UI Inspector, which dumps
+ *    the full node tree, re-dumps on every change, and exports the final
+ *    tree once the UI stabilizes (Phase 7 - UI Inspector).
  *
  * It never clicks, types, performs gestures, or reads fares - it only reads
- * node metadata to locate the pickup field.
+ * node metadata.
  */
 @AndroidEntryPoint
 class FareCompareAccessibilityService : AccessibilityService() {
@@ -39,6 +44,9 @@ class FareCompareAccessibilityService : AccessibilityService() {
     @Inject
     lateinit var pickupDetectionCoordinator: PickupDetectionCoordinator
 
+    @Inject
+    lateinit var uiInspectorCoordinator: UiInspectorCoordinator
+
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -47,12 +55,14 @@ class FareCompareAccessibilityService : AccessibilityService() {
 
         if (eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
             handleForegroundAppChanged(packageName)
+            uiInspectorCoordinator.onForegroundAppChanged(packageName)
         }
 
         if (eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
             eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
         ) {
             maybeDetectPickupField(packageName)
+            maybeDumpUberUiTree(packageName)
         }
     }
 
@@ -75,6 +85,11 @@ class FareCompareAccessibilityService : AccessibilityService() {
         }
     }
 
+    private fun maybeDumpUberUiTree(packageName: String) {
+        if (packageName != UBER_PACKAGE_NAME) return
+        uiInspectorCoordinator.onRelevantUiEvent { rootInActiveWindow }
+    }
+
     override fun onInterrupt() {
         // Interruption handling is implemented in a later automation phase.
     }
@@ -86,6 +101,7 @@ class FareCompareAccessibilityService : AccessibilityService() {
 
     private companion object {
         const val TAG = "FareCompareAccessibility"
+        const val UBER_PACKAGE_NAME = "com.ubercab"
         val KNOWN_RIDE_PROVIDERS = RideProvider.values().toList()
     }
 }
