@@ -1,0 +1,32 @@
+Fix: Uber's single "Where to?" entry point was never recognized as a pickup placeholder
+
+Root cause for Uber closing without doing anything: Uber's home screen
+has no separately editable pickup field at all - there is one combined
+"Where to?" tap target (phrased like a destination prompt) that opens the
+trip-entry screen for both pickup and destination. The pickup-placeholder
+search only used pickup-labeled keywords ("pickup", "current location",
+etc.), so on Uber it matched nothing, retried 5 times uselessly, and
+failed before a single field was ever touched or clicked - explaining why
+Uber visibly "did nothing" and then closed.
+
+Fixes:
+- findClickablePlaceholder now also matches universal trip-entry phrasing
+  ("where to", "search", "plan a trip", "book a ride", etc.) when hunting
+  for a PICKUP placeholder specifically, covering the well-documented
+  single-entry-point pattern Uber's home screen uses.
+- New: before attempting to find/click/type a pickup or destination field
+  at all, the engine now checks whether a visible field already contains
+  text substantially matching the address we were about to enter (token
+  overlap, same technique as the suggestion selector). Uber, Ola, and
+  Rapido all auto-fill pickup from device GPS by default - exactly like
+  this app's own Home screen already does - so in the common case pickup
+  needs no click/type/confirm at all; this also removes a source of
+  fragile, unnecessary interaction with an already-correct field.
+
+Tested: ./gradlew assembleDebug and testDebugUnitTest both green (34
+tests, unchanged - this fix reuses existing tested field-scoring
+machinery). Still not verified against a live Uber/Ola/Rapido install.
+If a provider still fails, the Comparison screen now shows a red
+diagnostics line with the exact editable fields the engine found on
+screen - please include that text in the next report so the specific
+keyword/hint gap can be closed precisely instead of guessed at again.

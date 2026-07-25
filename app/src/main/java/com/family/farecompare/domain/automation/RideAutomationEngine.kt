@@ -208,6 +208,18 @@ class RideAutomationEngine @Inject constructor(
         excludeBounds: NodeBounds?,
         emit: suspend (RideAutomationStep) -> Unit
     ): NodeBounds? {
+        // Uber, Ola, and Rapido all auto-fill pickup from device GPS by
+        // default, exactly like this app's own Home screen does. If a
+        // field on screen already contains text closely matching the
+        // address we were about to type, there is nothing to click or
+        // retype - treat it as already confirmed. This avoids fragile
+        // clicking for the one field that is usually already correct.
+        val alreadyFilled = findAlreadyMatchingField(provider, address, waitFieldState)
+        if (alreadyFilled != null) {
+            log(provider, confirmState, "${role.label()} already auto-filled with a matching value, skipping entry")
+            return alreadyFilled
+        }
+
         var retryCount = 0
 
         while (retryCount <= MAX_FIELD_RETRIES) {
@@ -294,6 +306,58 @@ class RideAutomationEngine @Inject constructor(
         lastDiagnosticsSummary = diagnosticsSummary
         return null
     }
+
+    /**
+     * Checks the current screen for any visible, non-blank editable field
+     * whose text already substantially matches [address] (by token
+     * overlap, same approach as [SuggestionSelector]) - i.e. the provider
+     * app already auto-filled it correctly and no click/type/confirm step
+     * is needed at all.
+     */
+    private fun findAlreadyMatchingField(
+        provider: RideAppProvider,
+        address: String,
+        state: AutomationState
+    ): NodeBounds? {
+        val root = accessibilityGatewayRepository.currentRootNode() ?: return null
+        val addressTokens = tokenize(address)
+        if (addressTokens.isEmpty()) return null
+
+        val match = findBestTextOverlapNode(root, addressTokens, depth = 0)
+        if (match == null) {
+            log(provider, state, "No already-filled field matches '$address'")
+            return null
+        }
+        return boundsOf(match)
+    }
+
+    private fun findBestTextOverlapNode(
+        node: AccessibilityNodeInfo?,
+        addressTokens: Set<String>,
+        depth: Int
+    ): AccessibilityNodeInfo? {
+        if (node == null || depth > MAX_NODE_SEARCH_DEPTH) return null
+
+        if (node.isVisibleToUser && (node.isEditable || node.className?.toString()?.contains("EditText", true) == true)) {
+            val text = node.text?.toString().orEmpty()
+            if (text.isNotBlank()) {
+                val overlap = addressTokens.intersect(tokenize(text)).size
+                val overlapRatio = overlap.toDouble() / addressTokens.size
+                if (overlapRatio >= MIN_ALREADY_FILLED_OVERLAP_RATIO) return node
+            }
+        }
+
+        for (i in 0 until node.childCount) {
+            findBestTextOverlapNode(node.getChild(i), addressTokens, depth + 1)?.let { return it }
+        }
+        return null
+    }
+
+    private fun tokenize(text: String): Set<String> = text.lowercase()
+        .replace(Regex("[^a-z0-9\\s]"), " ")
+        .split(Regex("\\s+"))
+        .filter { it.length > 2 }
+        .toSet()
 
     /**
      * Tries, in order: keyword-matched editable field -> scroll and retry
@@ -504,5 +568,6 @@ class RideAutomationEngine @Inject constructor(
     private companion object {
         const val TAG = "RideAutomationEngine"
         const val MAX_NODE_SEARCH_DEPTH = 100
+        const val MIN_ALREADY_FILLED_OVERLAP_RATIO = 0.4
     }
 }

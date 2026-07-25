@@ -49,7 +49,16 @@ class LocationFieldDetectorImpl @Inject constructor() : LocationFieldDetector {
         role: FieldRole,
         additionalKeywords: List<String>
     ): DetectedField? {
-        val keywords = keywordsFor(role) + additionalKeywords.map { it.lowercase() }
+        // Many ride apps (Uber's home screen is the best-known example)
+        // have no directly editable pickup field at all: there's a single
+        // "Where to?" tap target - phrased like a destination prompt - that
+        // opens one combined screen for both pickup and destination. So
+        // when searching for a PICKUP placeholder specifically, universal
+        // trip-entry phrasing must also count as a match, or that single
+        // entry point is never found and nothing can proceed.
+        val keywords = keywordsFor(role) + additionalKeywords.map { it.lowercase() } +
+            if (role == FieldRole.PICKUP) UNIVERSAL_ENTRY_KEYWORDS else emptyList()
+
         val candidates = mutableListOf<ScoredCandidate>()
         collectClickablePlaceholderCandidates(rootNode, depth = 0, keywords = keywords, candidates = candidates)
 
@@ -347,6 +356,25 @@ class LocationFieldDetectorImpl @Inject constructor() : LocationFieldDetector {
             "enter destination",
             "to location",
             " to"
+        )
+
+        /**
+         * Generic "start planning a trip" phrasing used by apps whose home
+         * screen has a single combined entry point rather than a
+         * separately editable pickup field (e.g. Uber's "Where to?" bar).
+         * Only consulted when hunting for a *pickup* placeholder, since a
+         * genuinely pickup-labeled placeholder should already be matched
+         * by [PICKUP_KEYWORDS] first.
+         */
+        val UNIVERSAL_ENTRY_KEYWORDS = listOf(
+            "where to",
+            "search",
+            "plan a trip",
+            "plan your trip",
+            "book a ride",
+            "book your ride",
+            "get a ride",
+            "where are you"
         )
 
         const val EDITABLE_WEIGHT = 40
