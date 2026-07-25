@@ -10,6 +10,7 @@ import com.family.farecompare.domain.automation.LaunchRideAppUseCase
 import com.family.farecompare.domain.automation.RideAppProvider
 import com.family.farecompare.domain.common.ResourceProvider
 import com.family.farecompare.domain.foreground.ForegroundAppRepository
+import com.family.farecompare.domain.location.PickupDetectionRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -29,7 +30,8 @@ class HomeViewModel @Inject constructor(
     private val launchRideAppUseCase: LaunchRideAppUseCase,
     private val resourceProvider: ResourceProvider,
     rideAppProviders: Set<@JvmSuppressWildcards RideAppProvider>,
-    foregroundAppRepository: ForegroundAppRepository
+    foregroundAppRepository: ForegroundAppRepository,
+    pickupDetectionRepository: PickupDetectionRepository
 ) : ViewModel() {
 
     // Phase 6 supports Uber only. Ola/Rapido will be added to
@@ -49,6 +51,9 @@ class HomeViewModel @Inject constructor(
         }
         foregroundAppRepository.currentForegroundApp
             .onEach { app -> _uiState.update { it.copy(currentForegroundApp = app) } }
+            .launchIn(viewModelScope)
+        pickupDetectionRepository.pickupDetectionResult
+            .onEach { result -> _uiState.update { it.copy(pickupDetectionResult = result) } }
             .launchIn(viewModelScope)
     }
 

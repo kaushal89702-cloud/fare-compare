@@ -44,6 +44,7 @@ import com.family.farecompare.domain.model.RideProvider
 import com.family.farecompare.presentation.common.OnResume
 import com.family.farecompare.presentation.components.CurrentAppCard
 import com.family.farecompare.presentation.components.FareResultCard
+import com.family.farecompare.presentation.components.PickupDetectionCard
 import com.family.farecompare.presentation.theme.FareCompareTheme
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -127,6 +128,8 @@ private fun HomeScreenContent(
         )
 
         CurrentAppCard(currentAppDisplayName = uiState.currentForegroundApp?.displayName)
+
+        PickupDetectionCard(result = uiState.pickupDetectionResult)
 
         Text(
             text = uiState.automationStatusText,

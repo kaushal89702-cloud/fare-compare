@@ -4,15 +4,28 @@ import android.accessibilityservice.AccessibilityService
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import com.family.farecompare.data.foreground.ForegroundAppNameResolver
+import com.family.farecompare.domain.location.PickupDetectionCoordinator
 import com.family.farecompare.domain.foreground.ForegroundAppRepository
 import com.family.farecompare.domain.model.ForegroundApp
+import com.family.farecompare.domain.model.RideProvider
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 /**
- * Accessibility service that detects the foreground application via window
- * state change events and reports it to [ForegroundAppRepository]. It does
- * not read screen content, click, or automate anything in this phase.
+ * Accessibility service that:
+ * 1. Detects the foreground application via window state change events and
+ *    reports it to [ForegroundAppRepository] (Phase 5).
+ * 2. When a known ride provider (Uber, Ola, Rapido) is in the foreground,
+ *    hands its window content to [PickupDetectionCoordinator] so it can
+ *    locate and score the pickup location field (Phase 7).
+ *
+ * It never clicks, types, performs gestures, or reads fares - it only reads
+ * node metadata to locate the pickup field.
  */
 @AndroidEntryPoint
 class FareCompareAccessibilityService : AccessibilityService() {
@@ -23,10 +36,27 @@ class FareCompareAccessibilityService : AccessibilityService() {
     @Inject
     lateinit var foregroundAppNameResolver: ForegroundAppNameResolver
 
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        if (event?.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
+    @Inject
+    lateinit var pickupDetectionCoordinator: PickupDetectionCoordinator
 
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        val eventType = event?.eventType ?: return
         val packageName = event.packageName?.toString() ?: return
+
+        if (eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+            handleForegroundAppChanged(packageName)
+        }
+
+        if (eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
+            eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
+        ) {
+            maybeDetectPickupField(packageName)
+        }
+    }
+
+    private fun handleForegroundAppChanged(packageName: String) {
         if (packageName == foregroundAppRepository.currentForegroundApp.value?.packageName) return
 
         val displayName = foregroundAppNameResolver.resolveDisplayName(packageName)
@@ -36,11 +66,26 @@ class FareCompareAccessibilityService : AccessibilityService() {
         Log.d(TAG, "Foreground App: $displayName")
     }
 
+    private fun maybeDetectPickupField(packageName: String) {
+        val provider = KNOWN_RIDE_PROVIDERS.firstOrNull { it.packageName == packageName } ?: return
+        val rootNode = rootInActiveWindow ?: return
+
+        serviceScope.launch {
+            pickupDetectionCoordinator.analyze(rootNode, provider.displayName)
+        }
+    }
+
     override fun onInterrupt() {
         // Interruption handling is implemented in a later automation phase.
     }
 
+    override fun onDestroy() {
+        super.onDestroy()
+        serviceScope.cancel()
+    }
+
     private companion object {
         const val TAG = "FareCompareAccessibility"
+        val KNOWN_RIDE_PROVIDERS = RideProvider.values().toList()
     }
 }

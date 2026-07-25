@@ -8,6 +8,11 @@
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
         tools:ignore="QueryAllPackagesPermission" />
 
+    <!-- Used only to verify whether a detected pickup field already matches
+         the device's current location. No location data leaves the device. -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+
     <application
         android:name=".FareCompareApp"
         android:allowBackup="true"
