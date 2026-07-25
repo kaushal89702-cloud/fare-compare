@@ -165,7 +165,13 @@ class RideAutomationEngine @Inject constructor(
                 } else {
                     AutomationFailureReason.FareNotFoundBeforeTimeout
                 }
-                failureDiagnosticsRecorder.captureFailure(provider.displayName, failureReason.javaClass.simpleName, rootNode)
+                val diagnostics = failureDiagnosticsRecorder.captureFailure(
+                    provider.displayName,
+                    failureReason.javaClass.simpleName,
+                    rootNode
+                )
+                lastDiagnosticsSummary = buildDiagnosticsSummary(diagnostics)
+                log(provider, AutomationState.WAIT_FARE_SCREEN, "Diagnostics: $lastDiagnosticsSummary")
                 emit(fail(provider, failureReason))
                 return@flow
             }
@@ -294,7 +300,14 @@ class RideAutomationEngine @Inject constructor(
             "${role.label()}FieldNotFound",
             rootNode
         )
-        val diagnosticsSummary = buildString {
+        val diagnosticsSummary = buildDiagnosticsSummary(diagnostics)
+        log(provider, waitFieldState, "Diagnostics: $diagnosticsSummary")
+        lastDiagnosticsSummary = diagnosticsSummary
+        return null
+    }
+
+    private fun buildDiagnosticsSummary(diagnostics: com.family.farecompare.domain.inspector.FailureDiagnosticsSummary): String =
+        buildString {
             append("${diagnostics.totalNodeCount} nodes, ${diagnostics.editableFieldDescriptions.size} editable field(s) present")
             if (diagnostics.editableFieldDescriptions.isNotEmpty()) {
                 append(": ")
@@ -302,10 +315,6 @@ class RideAutomationEngine @Inject constructor(
             }
             diagnostics.exportedFilePath?.let { append(" (exported: $it)") }
         }
-        log(provider, waitFieldState, "Diagnostics: $diagnosticsSummary")
-        lastDiagnosticsSummary = diagnosticsSummary
-        return null
-    }
 
     /**
      * Checks the current screen for any visible, non-blank editable field

@@ -69,7 +69,7 @@ fun ComparisonScreen(
                 style = MaterialTheme.typography.bodyMedium
             )
 
-            if (uiState.isRunning) {
+            if (uiState.providerProgress.isNotEmpty()) {
                 ProviderProgressList(uiState)
             }
 
