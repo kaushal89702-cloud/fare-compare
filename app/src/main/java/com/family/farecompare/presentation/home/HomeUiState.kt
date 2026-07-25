@@ -11,6 +11,7 @@ data class HomeUiState(
     val isDestinationTouched: Boolean = false,
     val isAccessibilityEnabled: Boolean = false,
     val currentForegroundApp: ForegroundApp? = null,
+    val automationStatusText: String = "",
     val fareResults: List<FareResult> = RideProvider.values().map { FareResult(provider = it) }
 ) {
     val isPickupError: Boolean get() = isPickupTouched && pickup.isBlank()

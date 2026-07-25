@@ -15,14 +15,20 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
@@ -40,6 +46,7 @@ import com.family.farecompare.presentation.components.CurrentAppCard
 import com.family.farecompare.presentation.components.FareResultCard
 import com.family.farecompare.presentation.theme.FareCompareTheme
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
     onSettingsClick: () -> Unit,
@@ -47,19 +54,31 @@ fun HomeScreen(
     viewModel: HomeViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val snackbarHostState = remember { SnackbarHostState() }
 
     OnResume { viewModel.refreshAccessibilityStatus() }
 
-    HomeScreenContent(
+    LaunchedEffect(viewModel) {
+        viewModel.snackbarEvents.collect { message ->
+            snackbarHostState.showSnackbar(message)
+        }
+    }
+
+    Scaffold(
         modifier = modifier,
-        uiState = uiState,
-        onPickupChanged = viewModel::onPickupChanged,
-        onDestinationChanged = viewModel::onDestinationChanged,
-        onPickupFocusLost = viewModel::onPickupFocusLost,
-        onDestinationFocusLost = viewModel::onDestinationFocusLost,
-        onCompareClicked = viewModel::onCompareClicked,
-        onSettingsClick = onSettingsClick
-    )
+        snackbarHost = { SnackbarHost(snackbarHostState) }
+    ) { padding ->
+        HomeScreenContent(
+            modifier = Modifier.padding(padding),
+            uiState = uiState,
+            onPickupChanged = viewModel::onPickupChanged,
+            onDestinationChanged = viewModel::onDestinationChanged,
+            onPickupFocusLost = viewModel::onPickupFocusLost,
+            onDestinationFocusLost = viewModel::onDestinationFocusLost,
+            onCompareClicked = viewModel::onCompareClicked,
+            onSettingsClick = onSettingsClick
+        )
+    }
 }
 
 @Composable
@@ -108,6 +127,12 @@ private fun HomeScreenContent(
         )
 
         CurrentAppCard(currentAppDisplayName = uiState.currentForegroundApp?.displayName)
+
+        Text(
+            text = uiState.automationStatusText,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.primary
+        )
 
         OutlinedTextField(
             value = uiState.pickup,
@@ -199,7 +224,7 @@ private fun HomeScreenPreviewLight() {
     FareCompareTheme(darkTheme = false, dynamicColor = false) {
         Surface {
             HomeScreenContent(
-                uiState = HomeUiState(),
+                uiState = HomeUiState(automationStatusText = "Idle"),
                 onPickupChanged = {},
                 onDestinationChanged = {},
                 onPickupFocusLost = {},
@@ -221,6 +246,7 @@ private fun HomeScreenPreviewDark() {
                     pickup = "Koramangala",
                     destination = "Whitefield",
                     isAccessibilityEnabled = true,
+                    automationStatusText = "Waiting for Uber...",
                     fareResults = RideProvider.values().map { FareResult(provider = it) }
                 ),
                 onPickupChanged = {},
