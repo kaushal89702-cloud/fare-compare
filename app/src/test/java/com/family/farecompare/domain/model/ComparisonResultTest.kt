@@ -8,6 +8,25 @@ import org.junit.Test
 
 class ComparisonResultTest {
 
+    @Test
+    fun `failure carries an optional diagnostics summary describing what was found on screen`() {
+        val withDiagnostics = ProviderComparisonOutcome.Failure(
+            provider = RideProvider.RAPIDO,
+            reason = AutomationFailureReason.DestinationFieldNotFound,
+            diagnosticsSummary = "3 editable field(s) present: resourceId=com.rapido:id/pickup text='MG Road'"
+        )
+        assertEquals(
+            "3 editable field(s) present: resourceId=com.rapido:id/pickup text='MG Road'",
+            withDiagnostics.diagnosticsSummary
+        )
+
+        val withoutDiagnostics = ProviderComparisonOutcome.Failure(
+            provider = RideProvider.RAPIDO,
+            reason = AutomationFailureReason.AccessibilityDisabled
+        )
+        assertNull(withoutDiagnostics.diagnosticsSummary)
+    }
+
     private fun quote(provider: RideProvider, amount: Double) = FareQuote(
         provider = provider,
         rideType = RideType.CAB,

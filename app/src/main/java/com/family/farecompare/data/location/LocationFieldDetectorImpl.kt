@@ -73,6 +73,58 @@ class LocationFieldDetectorImpl @Inject constructor() : LocationFieldDetector {
         return best.toDetectedField()
     }
 
+    override fun findFieldBelow(rootNode: AccessibilityNodeInfo, afterBounds: NodeBounds): DetectedField? {
+        val candidates = mutableListOf<ScoredCandidate>()
+        collectInteractableBelow(rootNode, depth = 0, afterBounds = afterBounds, candidates = candidates)
+
+        // Nearest one below wins - smallest vertical gap from the reference field.
+        val best = candidates.minByOrNull { it.score } ?: return null
+        return DetectedField(
+            value = best.value,
+            confidenceScore = FIELD_BELOW_CONFIDENCE,
+            bounds = best.bounds,
+            resourceId = best.resourceId
+        )
+    }
+
+    private fun collectInteractableBelow(
+        node: AccessibilityNodeInfo?,
+        depth: Int,
+        afterBounds: NodeBounds,
+        candidates: MutableList<ScoredCandidate>
+    ) {
+        if (node == null || depth > MAX_TRAVERSAL_DEPTH) return
+
+        if (node.isVisibleToUser && (isEditableLike(node) || node.isClickable)) {
+            val bounds = Rect()
+            node.getBoundsInScreen(bounds)
+            // "Below" means it starts at or after the reference field's
+            // bottom edge, and isn't the reference field itself.
+            if (bounds.top >= afterBounds.bottom && !(bounds.left == afterBounds.left && bounds.top == afterBounds.top)) {
+                val text = node.text?.toString().orEmpty()
+                val hint = node.hintText?.toString().orEmpty()
+                val contentDescription = node.contentDescription?.toString().orEmpty()
+                val value = text.ifBlank { hint }.ifBlank { contentDescription }
+                if (value.isNotBlank()) {
+                    val verticalGap = bounds.top - afterBounds.bottom
+                    candidates.add(
+                        ScoredCandidate(
+                            value = value,
+                            score = verticalGap,
+                            bounds = NodeBounds(bounds.left, bounds.top, bounds.right, bounds.bottom),
+                            resourceId = node.viewIdResourceName,
+                            isBlank = text.isBlank()
+                        )
+                    )
+                }
+            }
+        }
+
+        for (i in 0 until node.childCount) {
+            collectInteractableBelow(node.getChild(i), depth + 1, afterBounds, candidates)
+        }
+    }
+
     private fun collectEditableCandidates(
         node: AccessibilityNodeInfo?,
         depth: Int,
@@ -314,5 +366,6 @@ class LocationFieldDetectorImpl @Inject constructor() : LocationFieldDetector {
         const val MINIMUM_SCORE_THRESHOLD = 35
         const val MINIMUM_PLACEHOLDER_SCORE_THRESHOLD = 20
         const val MAX_TRAVERSAL_DEPTH = 60
+        const val FIELD_BELOW_CONFIDENCE = 45
     }
 }

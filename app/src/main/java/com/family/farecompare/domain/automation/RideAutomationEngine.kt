@@ -76,11 +76,20 @@ class RideAutomationEngine @Inject constructor(
     private val failureDiagnosticsRecorder: FailureDiagnosticsRecorder,
     private val appReturner: AppReturner
 ) {
+    /**
+     * Set by [runFieldStates] right before it gives up on a field, so
+     * [fail] can attach a human-readable summary of what was actually
+     * found on screen to the emitted [ProviderComparisonOutcome.Failure].
+     * Cleared at the start of every provider run.
+     */
+    private var lastDiagnosticsSummary: String? = null
+
     operator fun invoke(
         provider: RideAppProvider,
         pickupAddress: String,
         destinationAddress: String
     ): Flow<RideAutomationStep> = flow {
+        lastDiagnosticsSummary = null
         try {
             log(provider, AutomationState.WAIT_APP, "Checking accessibility service")
             emit(progress(provider, AutomationState.WAIT_APP, "Checking accessibility..."))
@@ -273,13 +282,16 @@ class RideAutomationEngine @Inject constructor(
             "${role.label()}FieldNotFound",
             rootNode
         )
-        log(
-            provider,
-            waitFieldState,
-            "Diagnostics: ${diagnostics.totalNodeCount} nodes, " +
-                "${diagnostics.editableFieldDescriptions.size} editable fields present " +
-                "(exported: ${diagnostics.exportedFilePath ?: "n/a"})"
-        )
+        val diagnosticsSummary = buildString {
+            append("${diagnostics.totalNodeCount} nodes, ${diagnostics.editableFieldDescriptions.size} editable field(s) present")
+            if (diagnostics.editableFieldDescriptions.isNotEmpty()) {
+                append(": ")
+                append(diagnostics.editableFieldDescriptions.joinToString(separator = " | "))
+            }
+            diagnostics.exportedFilePath?.let { append(" (exported: $it)") }
+        }
+        log(provider, waitFieldState, "Diagnostics: $diagnosticsSummary")
+        lastDiagnosticsSummary = diagnosticsSummary
         return null
     }
 
@@ -340,6 +352,21 @@ class RideAutomationEngine @Inject constructor(
             if (node != null) {
                 log(provider, state, "Clickable placeholder found for ${role.label()}, will tap to reveal text field")
                 return node to true
+            }
+        }
+
+        // Wording-independent: for destination specifically, once pickup's
+        // location on screen is known (excludeBounds), the destination
+        // input is almost always the very next interactable element below
+        // it - this works regardless of whatever text/hint the app uses.
+        if (role == FieldRole.DESTINATION && excludeBounds != null && retryCount >= 1) {
+            val below = locationFieldDetector.findFieldBelow(root, excludeBounds)
+            if (below != null) {
+                val node = locateNodeByValueAndBounds(root, below.value, below.bounds, depth = 0)
+                if (node != null) {
+                    log(provider, state, "Found next field below pickup for ${role.label()} (position-based fallback)")
+                    return node to false
+                }
             }
         }
 
@@ -433,11 +460,36 @@ class RideAutomationEngine @Inject constructor(
     private fun progress(provider: RideAppProvider, state: AutomationState, message: String, retryCount: Int = 0): RideAutomationStep =
         RideAutomationStep.InProgress(state = state, message = message, retryCount = retryCount)
 
-    private fun fail(provider: RideAppProvider, reason: AutomationFailureReason): RideAutomationStep {
+    /**
+     * Emits the terminal failure step for [provider]. Critically, this also
+     * brings FareCompare back to the foreground for every failure reason
+     * that can occur *after* the provider app was actually launched -
+     * without this, a failed field search left the user stranded staring
+     * at the ride app with no visible indication that automation had given
+     * up and moved on, which is exactly what was reported: Uber "getting
+     * stuck and doing nothing" was this method never returning control to
+     * FareCompare on failure, not an infinite loop.
+     */
+    private suspend fun fail(provider: RideAppProvider, reason: AutomationFailureReason): RideAutomationStep {
         val rideProvider = com.family.farecompare.domain.model.RideProvider.values()
             .first { it.packageName == provider.packageName }
         log(provider, AutomationState.NEXT_APP, "Failed: ${reason.javaClass.simpleName}")
-        return RideAutomationStep.Finished(ProviderComparisonOutcome.Failure(rideProvider, reason))
+
+        // Only these three failure reasons can occur before provider.launch()
+        // is ever called; every other reason means the provider app is (or
+        // may still be) open on screen and FareCompare must reclaim focus.
+        val occurredBeforeLaunch = reason is AutomationFailureReason.AccessibilityDisabled ||
+            reason is AutomationFailureReason.AppNotInstalled ||
+            reason is AutomationFailureReason.NoInternet
+        val occurredAfterLaunch = !occurredBeforeLaunch
+        if (occurredAfterLaunch) {
+            log(provider, AutomationState.RETURN_TO_COMPARE_APP, "Returning to FareCompare after failure")
+            appReturner.bringFareCompareToForeground()
+        }
+
+        return RideAutomationStep.Finished(
+            ProviderComparisonOutcome.Failure(rideProvider, reason, diagnosticsSummary = lastDiagnosticsSummary)
+        )
     }
 
     private fun FieldRole.label(): String = when (this) {

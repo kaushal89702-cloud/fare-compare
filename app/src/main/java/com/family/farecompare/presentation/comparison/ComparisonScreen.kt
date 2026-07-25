@@ -124,6 +124,13 @@ private fun ProviderProgressList(uiState: ComparisonUiState) {
                     CircularProgressIndicator(modifier = Modifier.height(16.dp))
                 }
             }
+            progress.diagnosticsText?.let { diagnostics ->
+                Text(
+                    text = "Diagnostics: $diagnostics",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error
+                )
+            }
         }
     }
 }

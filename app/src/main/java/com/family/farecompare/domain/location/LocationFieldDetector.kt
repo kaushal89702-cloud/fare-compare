@@ -65,4 +65,15 @@ interface LocationFieldDetector {
      * re-selecting a field already filled for a different role).
      */
     fun findAnyEditableField(rootNode: AccessibilityNodeInfo, excludeBounds: NodeBounds? = null): DetectedField?
+
+    /**
+     * Wording-independent fallback: after [afterBounds] (typically the
+     * already-confirmed pickup field) has been located, finds the nearest
+     * editable-or-clickable node positioned below it on screen - the
+     * pattern virtually every ride-hailing app follows for "the next field
+     * in the trip form" regardless of its exact label text. Used only
+     * after keyword-based strategies have failed, since it makes no
+     * assumption about wording at all.
+     */
+    fun findFieldBelow(rootNode: AccessibilityNodeInfo, afterBounds: NodeBounds): DetectedField?
 }

@@ -76,12 +76,16 @@ class ComparisonViewModel @Inject constructor(
 
     private fun updateProgress(provider: RideAppProvider, step: RideAutomationStep) {
         val statusText = statusTextFor(provider.displayName, step)
+        val diagnosticsSummary = (step as? RideAutomationStep.Finished)
+            ?.let { (it.outcome as? ProviderComparisonOutcome.Failure)?.diagnosticsSummary }
+
         _uiState.update { state ->
             val existingIndex = state.providerProgress.indexOfFirst { it.providerDisplayName == provider.displayName }
             val updatedEntry = ProviderProgressUi(
                 providerDisplayName = provider.displayName,
                 statusText = statusText,
-                isFinished = step is RideAutomationStep.Finished
+                isFinished = step is RideAutomationStep.Finished,
+                diagnosticsText = diagnosticsSummary
             )
             val updatedList = if (existingIndex >= 0) {
                 state.providerProgress.toMutableList().apply { set(existingIndex, updatedEntry) }

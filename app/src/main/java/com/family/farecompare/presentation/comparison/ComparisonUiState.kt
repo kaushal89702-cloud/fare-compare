@@ -6,7 +6,8 @@ import com.family.farecompare.domain.model.FareQuote
 data class ProviderProgressUi(
     val providerDisplayName: String,
     val statusText: String,
-    val isFinished: Boolean
+    val isFinished: Boolean,
+    val diagnosticsText: String? = null
 )
 
 data class ComparisonUiState(
