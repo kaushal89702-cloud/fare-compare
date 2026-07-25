@@ -3,7 +3,12 @@ package com.family.farecompare.service
 import android.accessibilityservice.AccessibilityService
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityNodeInfo
 import com.family.farecompare.data.foreground.ForegroundAppNameResolver
+import com.family.farecompare.domain.automation.AccessibilityGateway
+import com.family.farecompare.domain.automation.AccessibilityGatewayRepository
+import com.family.farecompare.domain.automation.WindowContentEvent
+import com.family.farecompare.domain.automation.WindowContentEventBus
 import com.family.farecompare.domain.inspector.UiInspectorCoordinator
 import com.family.farecompare.domain.location.PickupDetectionCoordinator
 import com.family.farecompare.domain.foreground.ForegroundAppRepository
@@ -25,15 +30,18 @@ import javax.inject.Inject
  *    hands its window content to [PickupDetectionCoordinator] so it can
  *    locate and score the pickup location field (Phase 7).
  * 3. When Uber specifically is in the foreground, hands its window content
- *    to [UiInspectorCoordinator] for the developer UI Inspector, which dumps
- *    the full node tree, re-dumps on every change, and exports the final
- *    tree once the UI stabilizes (Phase 7 - UI Inspector).
+ *    to [UiInspectorCoordinator] for the developer UI Inspector (Phase 7).
+ * 4. Publishes every window-state/content-changed event to
+ *    [WindowContentEventBus] and exposes [rootInActiveWindow] via
+ *    [AccessibilityGatewayRepository] so [com.family.farecompare.domain.automation.RideAutomationEngine]
+ *    can wait for real UI changes and read/act on the live tree while
+ *    filling pickup/destination fields and waiting for fares.
  *
- * It never clicks, types, performs gestures, or reads fares - it only reads
- * node metadata.
+ * The service itself never performs an action beyond what it is asked to by
+ * the injected coordinators/engine - it is a thin, testable event dispatcher.
  */
 @AndroidEntryPoint
-class FareCompareAccessibilityService : AccessibilityService() {
+class FareCompareAccessibilityService : AccessibilityService(), AccessibilityGateway {
 
     @Inject
     lateinit var foregroundAppRepository: ForegroundAppRepository
@@ -47,7 +55,20 @@ class FareCompareAccessibilityService : AccessibilityService() {
     @Inject
     lateinit var uiInspectorCoordinator: UiInspectorCoordinator
 
+    @Inject
+    lateinit var accessibilityGatewayRepository: AccessibilityGatewayRepository
+
+    @Inject
+    lateinit var windowContentEventBus: WindowContentEventBus
+
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    override fun currentRootNode(): AccessibilityNodeInfo? = rootInActiveWindow
+
+    override fun onServiceConnected() {
+        super.onServiceConnected()
+        accessibilityGatewayRepository.attach(this)
+    }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         val eventType = event?.eventType ?: return
@@ -61,6 +82,7 @@ class FareCompareAccessibilityService : AccessibilityService() {
         if (eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
             eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
         ) {
+            windowContentEventBus.publish(WindowContentEvent(packageName))
             maybeDetectPickupField(packageName)
             maybeDumpUberUiTree(packageName)
         }
@@ -96,6 +118,7 @@ class FareCompareAccessibilityService : AccessibilityService() {
 
     override fun onDestroy() {
         super.onDestroy()
+        accessibilityGatewayRepository.detach(this)
         serviceScope.cancel()
     }
 

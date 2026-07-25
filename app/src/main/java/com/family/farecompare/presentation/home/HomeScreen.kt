@@ -2,23 +2,31 @@ package com.family.farecompare.presentation.home
 
 import android.content.res.Configuration
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -40,11 +48,10 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.family.farecompare.R
-import com.family.farecompare.domain.model.FareResult
-import com.family.farecompare.domain.model.RideProvider
+import com.family.farecompare.domain.model.RecentSearch
+import com.family.farecompare.domain.places.PlaceSuggestion
 import com.family.farecompare.presentation.common.OnResume
 import com.family.farecompare.presentation.components.CurrentAppCard
-import com.family.farecompare.presentation.components.FareResultCard
 import com.family.farecompare.presentation.components.PickupDetectionCard
 import com.family.farecompare.presentation.theme.FareCompareTheme
 
@@ -53,6 +60,7 @@ import com.family.farecompare.presentation.theme.FareCompareTheme
 fun HomeScreen(
     onSettingsClick: () -> Unit,
     onInspectorClick: () -> Unit,
+    onCompareStarted: () -> Unit,
     modifier: Modifier = Modifier,
     viewModel: HomeViewModel = hiltViewModel()
 ) {
@@ -78,7 +86,10 @@ fun HomeScreen(
             onDestinationChanged = viewModel::onDestinationChanged,
             onPickupFocusLost = viewModel::onPickupFocusLost,
             onDestinationFocusLost = viewModel::onDestinationFocusLost,
-            onCompareClicked = viewModel::onCompareClicked,
+            onCompareClicked = { viewModel.onCompareClicked(onCompareStarted) },
+            onCurrentLocationClicked = viewModel::onCurrentLocationClicked,
+            onSuggestionSelected = viewModel::onSuggestionSelected,
+            onRecentSearchSelected = viewModel::onRecentSearchSelected,
             onSettingsClick = onSettingsClick,
             onInspectorClick = onInspectorClick
         )
@@ -93,6 +104,9 @@ private fun HomeScreenContent(
     onPickupFocusLost: () -> Unit,
     onDestinationFocusLost: () -> Unit,
     onCompareClicked: () -> Unit,
+    onCurrentLocationClicked: () -> Unit,
+    onSuggestionSelected: (PlaceSuggestion) -> Unit,
+    onRecentSearchSelected: (RecentSearch) -> Unit,
     onSettingsClick: () -> Unit,
     onInspectorClick: () -> Unit,
     modifier: Modifier = Modifier
@@ -116,10 +130,7 @@ private fun HomeScreenContent(
             )
             Row {
                 IconButton(onClick = onInspectorClick) {
-                    Icon(
-                        imageVector = Icons.Filled.Search,
-                        contentDescription = "UI Inspector"
-                    )
+                    Icon(imageVector = Icons.Filled.Search, contentDescription = "UI Inspector")
                 }
                 IconButton(onClick = onSettingsClick) {
                     Icon(
@@ -140,52 +151,50 @@ private fun HomeScreenContent(
         )
 
         CurrentAppCard(currentAppDisplayName = uiState.currentForegroundApp?.displayName)
-
         PickupDetectionCard(result = uiState.pickupDetectionResult)
 
-        Text(
-            text = uiState.automationStatusText,
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.primary
-        )
-
-        OutlinedTextField(
-            value = uiState.pickup,
-            onValueChange = onPickupChanged,
-            modifier = Modifier
-                .fillMaxWidth()
-                .onFocusChanged { focusState ->
-                    if (!focusState.isFocused) onPickupFocusLost()
-                },
-            label = { Text(stringResource(R.string.pickup_label)) },
-            singleLine = true,
-            isError = uiState.isPickupError,
-            supportingText = {
-                if (uiState.isPickupError) {
-                    Text(stringResource(R.string.pickup_required))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            OutlinedTextField(
+                value = uiState.pickup,
+                onValueChange = onPickupChanged,
+                modifier = Modifier
+                    .weight(1f)
+                    .onFocusChanged { focusState -> if (!focusState.isFocused) onPickupFocusLost() },
+                label = { Text(stringResource(R.string.pickup_label)) },
+                singleLine = true,
+                isError = uiState.isPickupError,
+                supportingText = { if (uiState.isPickupError) Text(stringResource(R.string.pickup_required)) },
+                shape = RoundedCornerShape(16.dp)
+            )
+            IconButton(onClick = onCurrentLocationClicked) {
+                if (uiState.isResolvingCurrentLocation) {
+                    CircularProgressIndicator(modifier = Modifier.height(20.dp))
+                } else {
+                    Icon(imageVector = Icons.Filled.MyLocation, contentDescription = "Use current location")
                 }
-            },
-            shape = RoundedCornerShape(16.dp)
-        )
+            }
+        }
+
+        if (uiState.activeAddressField == ActiveAddressField.PICKUP && uiState.addressSuggestions.isNotEmpty()) {
+            SuggestionsList(uiState.addressSuggestions, onSuggestionSelected)
+        }
 
         OutlinedTextField(
             value = uiState.destination,
             onValueChange = onDestinationChanged,
             modifier = Modifier
                 .fillMaxWidth()
-                .onFocusChanged { focusState ->
-                    if (!focusState.isFocused) onDestinationFocusLost()
-                },
+                .onFocusChanged { focusState -> if (!focusState.isFocused) onDestinationFocusLost() },
             label = { Text(stringResource(R.string.destination_label)) },
             singleLine = true,
             isError = uiState.isDestinationError,
-            supportingText = {
-                if (uiState.isDestinationError) {
-                    Text(stringResource(R.string.destination_required))
-                }
-            },
+            supportingText = { if (uiState.isDestinationError) Text(stringResource(R.string.destination_required)) },
             shape = RoundedCornerShape(16.dp)
         )
+
+        if (uiState.activeAddressField == ActiveAddressField.DESTINATION && uiState.addressSuggestions.isNotEmpty()) {
+            SuggestionsList(uiState.addressSuggestions, onSuggestionSelected)
+        }
 
         Button(
             onClick = onCompareClicked,
@@ -195,39 +204,55 @@ private fun HomeScreenContent(
                 .height(56.dp),
             shape = RoundedCornerShape(16.dp)
         ) {
-            Text(
-                text = stringResource(R.string.compare_button),
-                style = MaterialTheme.typography.titleMedium
-            )
+            Text(text = stringResource(R.string.compare_button), style = MaterialTheme.typography.titleMedium)
         }
 
-        FareResultsSection(
-            fareResults = uiState.fareResults,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 8.dp)
-        )
+        if (uiState.recentSearches.isNotEmpty()) {
+            RecentSearchesSection(uiState.recentSearches, onRecentSearchSelected)
+        }
     }
 }
 
 @Composable
-private fun FareResultsSection(
-    fareResults: List<FareResult>,
-    modifier: Modifier = Modifier
-) {
-    BoxWithConstraints(modifier = modifier) {
-        val isWideLayout = maxWidth >= 600.dp
-        if (isWideLayout) {
-            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                fareResults.forEach { result ->
-                    FareResultCard(result = result, modifier = Modifier.weight(1f))
-                }
+private fun SuggestionsList(suggestions: List<PlaceSuggestion>, onSuggestionSelected: (PlaceSuggestion) -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
+        Column {
+            suggestions.forEach { suggestion ->
+                ListItem(
+                    headlineContent = { Text(suggestion.primaryText) },
+                    supportingContent = { Text(suggestion.secondaryText) },
+                    leadingContent = { Icon(Icons.Filled.Search, contentDescription = null) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onSuggestionSelected(suggestion) }
+                )
             }
-        } else {
-            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                fareResults.forEach { result ->
-                    FareResultCard(result = result, modifier = Modifier.fillMaxWidth())
-                }
+        }
+    }
+}
+
+@Composable
+private fun RecentSearchesSection(recentSearches: List<RecentSearch>, onRecentSearchSelected: (RecentSearch) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(
+            text = "Recent",
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.Bold
+        )
+        LazyColumn(modifier = Modifier.height((recentSearches.size.coerceAtMost(3) * 72).dp)) {
+            items(recentSearches) { recent ->
+                ListItem(
+                    headlineContent = { Text(recent.destinationAddress) },
+                    supportingContent = { Text("from ${recent.pickupAddress}") },
+                    leadingContent = { Icon(Icons.Filled.History, contentDescription = null) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onRecentSearchSelected(recent) }
+                )
             }
         }
     }
@@ -239,12 +264,15 @@ private fun HomeScreenPreviewLight() {
     FareCompareTheme(darkTheme = false, dynamicColor = false) {
         Surface {
             HomeScreenContent(
-                uiState = HomeUiState(automationStatusText = "Idle"),
+                uiState = HomeUiState(),
                 onPickupChanged = {},
                 onDestinationChanged = {},
                 onPickupFocusLost = {},
                 onDestinationFocusLost = {},
                 onCompareClicked = {},
+                onCurrentLocationClicked = {},
+                onSuggestionSelected = {},
+                onRecentSearchSelected = {},
                 onSettingsClick = {},
                 onInspectorClick = {}
             )
@@ -261,15 +289,16 @@ private fun HomeScreenPreviewDark() {
                 uiState = HomeUiState(
                     pickup = "Koramangala",
                     destination = "Whitefield",
-                    isAccessibilityEnabled = true,
-                    automationStatusText = "Waiting for Uber...",
-                    fareResults = RideProvider.values().map { FareResult(provider = it) }
+                    isAccessibilityEnabled = true
                 ),
                 onPickupChanged = {},
                 onDestinationChanged = {},
                 onPickupFocusLost = {},
                 onDestinationFocusLost = {},
                 onCompareClicked = {},
+                onCurrentLocationClicked = {},
+                onSuggestionSelected = {},
+                onRecentSearchSelected = {},
                 onSettingsClick = {},
                 onInspectorClick = {}
             )

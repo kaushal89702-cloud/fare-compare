@@ -1,9 +1,11 @@
 package com.family.farecompare.presentation.home
 
-import com.family.farecompare.domain.model.FareResult
 import com.family.farecompare.domain.model.ForegroundApp
 import com.family.farecompare.domain.model.PickupDetectionResult
-import com.family.farecompare.domain.model.RideProvider
+import com.family.farecompare.domain.model.RecentSearch
+import com.family.farecompare.domain.places.PlaceSuggestion
+
+enum class ActiveAddressField { NONE, PICKUP, DESTINATION }
 
 data class HomeUiState(
     val pickup: String = "",
@@ -12,9 +14,12 @@ data class HomeUiState(
     val isDestinationTouched: Boolean = false,
     val isAccessibilityEnabled: Boolean = false,
     val currentForegroundApp: ForegroundApp? = null,
-    val automationStatusText: String = "",
     val pickupDetectionResult: PickupDetectionResult? = null,
-    val fareResults: List<FareResult> = RideProvider.values().map { FareResult(provider = it) }
+    val recentSearches: List<RecentSearch> = emptyList(),
+    val activeAddressField: ActiveAddressField = ActiveAddressField.NONE,
+    val addressSuggestions: List<PlaceSuggestion> = emptyList(),
+    val isPlacesAvailable: Boolean = false,
+    val isResolvingCurrentLocation: Boolean = false
 ) {
     val isPickupError: Boolean get() = isPickupTouched && pickup.isBlank()
     val isDestinationError: Boolean get() = isDestinationTouched && destination.isBlank()

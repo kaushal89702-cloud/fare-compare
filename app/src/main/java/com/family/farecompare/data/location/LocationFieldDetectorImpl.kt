@@ -3,21 +3,23 @@ package com.family.farecompare.data.location
 import android.graphics.Rect
 import android.view.accessibility.AccessibilityNodeInfo
 import com.family.farecompare.domain.location.DetectedField
+import com.family.farecompare.domain.location.FieldRole
 import com.family.farecompare.domain.location.LocationFieldDetector
 import com.family.farecompare.domain.model.NodeBounds
 import javax.inject.Inject
 
 /**
- * Generic pickup-field detector that walks the accessibility node tree and
+ * Generic location-field detector that walks the accessibility node tree and
  * scores every editable candidate using signals that are common across
  * ride-hailing apps rather than any single provider's layout:
  *
  * - Is the node actually editable (an input, not a label)
  * - Does its text / hint / content description / resource id contain a
- *   pickup-related keyword ("pickup", "current location", "from", etc.)
- * - Do nearby sibling nodes carry a pickup-related label
+ *   role-specific keyword ("pickup", "current location", "where to", etc.)
+ * - Do nearby sibling nodes carry a matching label
  * - Is the node positioned in the upper portion of the screen (pickup
- *   fields conventionally precede destination fields)
+ *   fields conventionally precede destination fields; this bonus is only
+ *   applied for [FieldRole.PICKUP])
  * - How shallow is the node in the hierarchy (mild preference)
  *
  * No resource IDs, class names, or layouts specific to Uber, Ola, or Rapido
@@ -25,9 +27,9 @@ import javax.inject.Inject
  */
 class LocationFieldDetectorImpl @Inject constructor() : LocationFieldDetector {
 
-    override fun detectPickupField(rootNode: AccessibilityNodeInfo): DetectedField? {
+    override fun detectField(rootNode: AccessibilityNodeInfo, role: FieldRole): DetectedField? {
         val candidates = mutableListOf<ScoredCandidate>()
-        collectCandidates(rootNode, depth = 0, candidates = candidates)
+        collectCandidates(rootNode, depth = 0, role = role, candidates = candidates)
 
         val best = candidates.maxByOrNull { it.score } ?: return null
         if (best.score < MINIMUM_SCORE_THRESHOLD) return null
@@ -47,6 +49,7 @@ class LocationFieldDetectorImpl @Inject constructor() : LocationFieldDetector {
     private fun collectCandidates(
         node: AccessibilityNodeInfo?,
         depth: Int,
+        role: FieldRole,
         candidates: MutableList<ScoredCandidate>
     ) {
         if (node == null || depth > MAX_TRAVERSAL_DEPTH) return
@@ -55,17 +58,18 @@ class LocationFieldDetectorImpl @Inject constructor() : LocationFieldDetector {
             node.className?.toString()?.contains("EditText", ignoreCase = true) == true
 
         if (isEditableLike) {
-            scoreCandidate(node, depth)?.let { candidates.add(it) }
+            scoreCandidate(node, depth, role)?.let { candidates.add(it) }
         }
 
         for (i in 0 until node.childCount) {
-            collectCandidates(node.getChild(i), depth + 1, candidates)
+            collectCandidates(node.getChild(i), depth + 1, role, candidates)
         }
     }
 
-    private fun scoreCandidate(node: AccessibilityNodeInfo, depth: Int): ScoredCandidate? {
+    private fun scoreCandidate(node: AccessibilityNodeInfo, depth: Int, role: FieldRole): ScoredCandidate? {
         if (!node.isVisibleToUser) return null
 
+        val keywords = keywordsFor(role)
         val text = node.text?.toString().orEmpty()
         val hint = node.hintText?.toString().orEmpty()
         val contentDescription = node.contentDescription?.toString().orEmpty()
@@ -76,15 +80,15 @@ class LocationFieldDetectorImpl @Inject constructor() : LocationFieldDetector {
         if (node.className?.toString()?.contains("EditText", ignoreCase = true) == true) {
             score += CLASS_NAME_WEIGHT
         }
-        score += keywordScore(text, TEXT_KEYWORD_WEIGHT)
-        score += keywordScore(hint, HINT_KEYWORD_WEIGHT)
-        score += keywordScore(contentDescription, DESCRIPTION_KEYWORD_WEIGHT)
-        score += keywordScore(resourceId, RESOURCE_ID_KEYWORD_WEIGHT)
-        score += nearbyLabelScore(node)
+        score += keywordScore(text, keywords, TEXT_KEYWORD_WEIGHT)
+        score += keywordScore(hint, keywords, HINT_KEYWORD_WEIGHT)
+        score += keywordScore(contentDescription, keywords, DESCRIPTION_KEYWORD_WEIGHT)
+        score += keywordScore(resourceId, keywords, RESOURCE_ID_KEYWORD_WEIGHT)
+        score += nearbyLabelScore(node, keywords)
 
         val bounds = Rect()
         node.getBoundsInScreen(bounds)
-        if (bounds.top in 0..screenTopRegionPx()) {
+        if (role == FieldRole.PICKUP && bounds.top in 0..screenTopRegionPx()) {
             score += POSITION_WEIGHT
         }
 
@@ -103,7 +107,7 @@ class LocationFieldDetectorImpl @Inject constructor() : LocationFieldDetector {
         )
     }
 
-    private fun nearbyLabelScore(node: AccessibilityNodeInfo): Int {
+    private fun nearbyLabelScore(node: AccessibilityNodeInfo, keywords: List<String>): Int {
         val parent = node.parent ?: return 0
         for (i in 0 until parent.childCount) {
             val sibling = parent.getChild(i) ?: continue
@@ -111,17 +115,22 @@ class LocationFieldDetectorImpl @Inject constructor() : LocationFieldDetector {
             val siblingText = (
                 sibling.text?.toString().orEmpty() + " " + sibling.contentDescription?.toString().orEmpty()
                 ).lowercase()
-            if (PICKUP_KEYWORDS.any { siblingText.contains(it) }) {
+            if (keywords.any { siblingText.contains(it) }) {
                 return NEARBY_LABEL_WEIGHT
             }
         }
         return 0
     }
 
-    private fun keywordScore(source: String, weight: Int): Int {
+    private fun keywordScore(source: String, keywords: List<String>, weight: Int): Int {
         if (source.isBlank()) return 0
         val lower = source.lowercase()
-        return if (PICKUP_KEYWORDS.any { lower.contains(it) }) weight else 0
+        return if (keywords.any { lower.contains(it) }) weight else 0
+    }
+
+    private fun keywordsFor(role: FieldRole): List<String> = when (role) {
+        FieldRole.PICKUP -> PICKUP_KEYWORDS
+        FieldRole.DESTINATION -> DESTINATION_KEYWORDS
     }
 
     /** Rough "upper portion of screen" cutoff, independent of any single device's resolution. */
@@ -154,6 +163,17 @@ class LocationFieldDetectorImpl @Inject constructor() : LocationFieldDetector {
             "from location",
             "enter pickup",
             " from"
+        )
+
+        val DESTINATION_KEYWORDS = listOf(
+            "destination",
+            "drop",
+            "where to",
+            "where are you going",
+            "going to",
+            "enter destination",
+            "to location",
+            " to"
         )
 
         const val EDITABLE_WEIGHT = 40

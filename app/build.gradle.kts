@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -15,6 +17,22 @@ android {
         targetSdk = 34
         versionCode = 1
         versionName = "1.0"
+
+        // Optional. Never commit a real key: set PLACES_API_KEY in your
+        // local.properties (which is gitignored) to enable live Google
+        // Places autocomplete. Without it, the app falls back to manual
+        // address entry everywhere Places would have been used.
+        val placesApiKey = project.rootProject.file("local.properties")
+            .takeIf { it.exists() }
+            ?.let { file ->
+                val properties = Properties()
+                file.inputStream().use { properties.load(it) }
+                properties.getProperty("PLACES_API_KEY", "")
+            }
+            .orEmpty()
+
+        buildConfigField("String", "PLACES_API_KEY", "\"$placesApiKey\"")
+        manifestPlaceholders["placesApiKey"] = placesApiKey
     }
 
     buildTypes {
@@ -38,6 +56,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     composeOptions {
@@ -71,6 +90,22 @@ dependencies {
     ksp(libs.hilt.compiler)
     implementation(libs.hilt.navigation.compose)
 
+    implementation(libs.material.icons.extended)
+
+    implementation(libs.room.runtime)
+    implementation(libs.room.ktx)
+    ksp(libs.room.compiler)
+
+    implementation(libs.datastore.preferences)
+
+    implementation(libs.play.services.location)
+    implementation(libs.places)
+    implementation(libs.kotlinx.coroutines.play.services)
+
     debugImplementation(libs.ui.tooling)
     debugImplementation(libs.ui.test.manifest)
+
+    testImplementation(libs.junit)
+    testImplementation(libs.mockito.core)
+    testImplementation(libs.kotlinx.coroutines.test)
 }

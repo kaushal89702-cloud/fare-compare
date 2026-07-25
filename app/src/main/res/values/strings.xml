@@ -17,14 +17,4 @@
     <string name="enable_accessibility_button">Enable Accessibility Service</string>
     <string name="accessibility_service_description">Allows Fare Compare to read ride fare information from Uber, Ola, and Rapido once enabled in Accessibility Settings.</string>
     <string name="current_application_title">Current Application</string>
-    <string name="automation_status_idle">Idle</string>
-    <string name="automation_status_checking_accessibility">Checking Accessibility...</string>
-    <string name="automation_status_checking_installed">Checking %1$s...</string>
-    <string name="automation_status_launching">Launching %1$s...</string>
-    <string name="automation_status_waiting">Waiting for %1$s...</string>
-    <string name="automation_status_success">%1$s Opened Successfully</string>
-    <string name="automation_status_failed">Launch Failed</string>
-    <string name="message_app_not_installed">%1$s is not installed.</string>
-    <string name="message_unable_to_launch">Unable to launch %1$s.</string>
-    <string name="message_accessibility_required">Accessibility Service Required</string>
 </resources>
