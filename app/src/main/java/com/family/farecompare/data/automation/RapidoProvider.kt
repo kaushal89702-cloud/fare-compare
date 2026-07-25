@@ -12,4 +12,8 @@ class RapidoProvider @Inject constructor(
 
     override val displayName: String = "Rapido"
     override val packageName: String = "com.rapido.passenger"
+
+    override val pickupFieldHints: List<String> = listOf("your pickup location", "enter pickup point")
+    override val destinationFieldHints: List<String> =
+        listOf("enter your destination", "where do you want to go", "search drop location")
 }

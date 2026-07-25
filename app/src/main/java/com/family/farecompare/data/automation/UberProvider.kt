@@ -12,4 +12,12 @@ class UberProvider @Inject constructor(
 
     override val displayName: String = "Uber"
     override val packageName: String = "com.ubercab"
+
+    // Uber commonly shows pickup as an always-editable field but shows
+    // destination as a "Where to?" placeholder that must be tapped before
+    // its real text input appears - handled generically by
+    // LocationFieldDetector.findClickablePlaceholder using these hints.
+    override val pickupFieldHints: List<String> = listOf("pickup location", "enter pickup location")
+    override val destinationFieldHints: List<String> =
+        listOf("where to?", "where to", "search destination", "enter destination", "confirm destination")
 }

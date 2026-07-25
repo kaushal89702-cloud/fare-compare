@@ -1,6 +1,7 @@
 package com.family.farecompare.domain.location
 
 import android.view.accessibility.AccessibilityNodeInfo
+import com.family.farecompare.domain.model.NodeBounds
 
 /**
  * Which location field a caller wants [LocationFieldDetector] to look for.
@@ -22,7 +23,10 @@ enum class FieldRole {
  * description keywords, resource id naming, nearby labels, on-screen
  * position, node depth). No provider-specific resource IDs or layouts are
  * ever hardcoded, so the same implementation works for Uber, Ola, Rapido,
- * or any future provider without modification.
+ * or any future provider without modification. Provider-specific wording
+ * differences are supplied at call time via [additionalKeywords]
+ * ([com.family.farecompare.domain.automation.RideAppProvider.pickupFieldHints] /
+ * `destinationFieldHints`), not by branching on package name here.
  *
  * Note: [AccessibilityNodeInfo] is referenced directly here (rather than an
  * abstracted domain type) because tree traversal is inherently tied to the
@@ -30,8 +34,35 @@ enum class FieldRole {
  * would add complexity without a corresponding benefit for this app.
  */
 interface LocationFieldDetector {
-    fun detectField(rootNode: AccessibilityNodeInfo, role: FieldRole): DetectedField?
+    fun detectField(
+        rootNode: AccessibilityNodeInfo,
+        role: FieldRole,
+        additionalKeywords: List<String> = emptyList()
+    ): DetectedField?
 
     /** Convenience alias for [detectField] with [FieldRole.PICKUP]. */
     fun detectPickupField(rootNode: AccessibilityNodeInfo): DetectedField? = detectField(rootNode, FieldRole.PICKUP)
+
+    /**
+     * Finds a non-editable, clickable placeholder matching [role]'s
+     * keywords - e.g. a "Where to?" button that must be tapped before the
+     * real destination text input appears. Several providers (Uber, most
+     * notably) show destination this way rather than as an always-editable
+     * field, which is why a keyword-only search for an editable node can
+     * legitimately find nothing even though a destination entry point is
+     * clearly visible on screen.
+     */
+    fun findClickablePlaceholder(
+        rootNode: AccessibilityNodeInfo,
+        role: FieldRole,
+        additionalKeywords: List<String> = emptyList()
+    ): DetectedField?
+
+    /**
+     * Last-resort fallback used only after every keyword-based strategy has
+     * failed: returns any visible editable field on screen, preferring one
+     * that is still blank, excluding [excludeBounds] (used to avoid
+     * re-selecting a field already filled for a different role).
+     */
+    fun findAnyEditableField(rootNode: AccessibilityNodeInfo, excludeBounds: NodeBounds? = null): DetectedField?
 }

@@ -11,6 +11,16 @@ interface RideAppProvider {
     val displayName: String
     val packageName: String
 
+    /**
+     * Extra pickup/destination keywords specific to this provider's actual
+     * UI wording, layered on top of the generic keyword set used by
+     * [com.family.farecompare.domain.location.LocationFieldDetector]. Lets
+     * the shared, provider-agnostic detection engine still handle each
+     * app's real layout differences without hardcoding resource IDs.
+     */
+    val pickupFieldHints: List<String> get() = emptyList()
+    val destinationFieldHints: List<String> get() = emptyList()
+
     fun isInstalled(): Boolean
 
     /** Launches the app. Returns true if a launch intent was found and started. */

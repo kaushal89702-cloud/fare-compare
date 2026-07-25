@@ -12,4 +12,8 @@ class OlaProvider @Inject constructor(
 
     override val displayName: String = "Ola"
     override val packageName: String = "com.olacabs.customer"
+
+    override val pickupFieldHints: List<String> = listOf("pickup point", "current location")
+    override val destinationFieldHints: List<String> =
+        listOf("drop location", "enter drop location", "search for drop", "where to")
 }

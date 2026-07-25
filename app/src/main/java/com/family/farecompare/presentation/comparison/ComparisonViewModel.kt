@@ -93,14 +93,10 @@ class ComparisonViewModel @Inject constructor(
     }
 
     private fun statusTextFor(providerName: String, step: RideAutomationStep): String = when (step) {
-        RideAutomationStep.CheckingAccessibility -> "Checking accessibility..."
-        RideAutomationStep.CheckingInstalled -> "Checking $providerName..."
-        RideAutomationStep.Launching -> "Launching $providerName..."
-        RideAutomationStep.WaitingForForeground -> "Waiting for $providerName..."
-        RideAutomationStep.FillingPickup -> "Filling pickup..."
-        RideAutomationStep.FillingDestination -> "Filling destination..."
-        RideAutomationStep.WaitingForFare -> "Waiting for fare..."
-        RideAutomationStep.ReturningToFareCompare -> "Returning to FareCompare..."
+        is RideAutomationStep.InProgress -> {
+            val retrySuffix = if (step.retryCount > 0) " (retry ${step.retryCount})" else ""
+            "${step.message}$retrySuffix"
+        }
         is RideAutomationStep.Finished -> finishedStatusText(providerName, step)
     }
 

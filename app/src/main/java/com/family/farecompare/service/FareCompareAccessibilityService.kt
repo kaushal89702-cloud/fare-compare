@@ -29,8 +29,9 @@ import javax.inject.Inject
  * 2. When a known ride provider (Uber, Ola, Rapido) is in the foreground,
  *    hands its window content to [PickupDetectionCoordinator] so it can
  *    locate and score the pickup location field (Phase 7).
- * 3. When Uber specifically is in the foreground, hands its window content
- *    to [UiInspectorCoordinator] for the developer UI Inspector (Phase 7).
+ * 3. When any known ride provider (Uber, Ola, or Rapido) is in the
+ *    foreground, hands its window content to [UiInspectorCoordinator] for
+ *    the developer UI Inspector.
  * 4. Publishes every window-state/content-changed event to
  *    [WindowContentEventBus] and exposes [rootInActiveWindow] via
  *    [AccessibilityGatewayRepository] so [com.family.farecompare.domain.automation.RideAutomationEngine]
@@ -84,7 +85,7 @@ class FareCompareAccessibilityService : AccessibilityService(), AccessibilityGat
         ) {
             windowContentEventBus.publish(WindowContentEvent(packageName))
             maybeDetectPickupField(packageName)
-            maybeDumpUberUiTree(packageName)
+            maybeDumpRideProviderUiTree(packageName)
         }
     }
 
@@ -107,9 +108,8 @@ class FareCompareAccessibilityService : AccessibilityService(), AccessibilityGat
         }
     }
 
-    private fun maybeDumpUberUiTree(packageName: String) {
-        if (packageName != UBER_PACKAGE_NAME) return
-        uiInspectorCoordinator.onRelevantUiEvent { rootInActiveWindow }
+    private fun maybeDumpRideProviderUiTree(packageName: String) {
+        uiInspectorCoordinator.onRelevantUiEvent(packageName) { rootInActiveWindow }
     }
 
     override fun onInterrupt() {
@@ -124,7 +124,6 @@ class FareCompareAccessibilityService : AccessibilityService(), AccessibilityGat
 
     private companion object {
         const val TAG = "FareCompareAccessibility"
-        const val UBER_PACKAGE_NAME = "com.ubercab"
         val KNOWN_RIDE_PROVIDERS = RideProvider.values().toList()
     }
 }

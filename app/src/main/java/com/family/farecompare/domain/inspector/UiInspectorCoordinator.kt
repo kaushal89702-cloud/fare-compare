@@ -3,6 +3,8 @@ package com.family.farecompare.domain.inspector
 import android.util.Log
 import android.view.accessibility.AccessibilityNodeInfo
 import com.family.farecompare.domain.automation.AppReturner
+import com.family.farecompare.domain.foreground.KnownForegroundApps
+import com.family.farecompare.domain.model.RideProvider
 import com.family.farecompare.domain.model.UiInspectorSnapshot
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -14,8 +16,11 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Drives the "dump repeatedly while Uber's UI is still loading, stop once
- * it stabilizes" behavior described in the UI Inspector phase:
+ * Drives the "dump repeatedly while the ride app's UI is still loading,
+ * stop once it stabilizes" behavior of the developer UI Inspector, for
+ * *any* of the three supported ride providers (Uber, Ola, Rapido) - not
+ * Uber specifically. Whichever provider's package is currently in the
+ * foreground is what gets dumped:
  *
  * - Every relevant accessibility event triggers an immediate re-dump
  *   (read-only; no clicks, typing, or gestures).
@@ -25,8 +30,9 @@ import javax.inject.Singleton
  *   [STABILIZATION_DEBOUNCE_MS], the UI is considered stable: the tree is
  *   exported to Documents/FareCompare and FareCompare is brought back to
  *   the foreground automatically.
- * - This "settle and finish" happens once per Uber session; leaving Uber's
- *   foreground resets it so the next time Uber opens, a fresh dump cycle runs.
+ * - This "settle and finish" happens once per provider session; leaving
+ *   that provider's foreground resets it so the next time any ride
+ *   provider opens, a fresh dump cycle runs.
  */
 @Singleton
 class UiInspectorCoordinator @Inject constructor(
@@ -39,8 +45,10 @@ class UiInspectorCoordinator @Inject constructor(
     private var stabilizationJob: Job? = null
     private var lastFormattedTree: String? = null
     private var hasCompletedThisSession = false
+    private var activePackageName: String? = null
 
-    fun onRelevantUiEvent(rootNodeProvider: () -> AccessibilityNodeInfo?) {
+    fun onRelevantUiEvent(packageName: String, rootNodeProvider: () -> AccessibilityNodeInfo?) {
+        if (!isKnownRideProviderPackage(packageName)) return
         if (hasCompletedThisSession) return
         val rootNode = rootNodeProvider() ?: return
 
@@ -60,29 +68,36 @@ class UiInspectorCoordinator @Inject constructor(
                     lastUpdatedAtMillis = System.currentTimeMillis()
                 )
             )
-            Log.d(TAG, "Dumped Uber UI tree: $nodeCount nodes, changed=$changedSinceLastDump")
+            val providerName = KnownForegroundApps.displayNameFor(packageName) ?: packageName
+            Log.d(TAG, "Dumped $providerName UI tree: $nodeCount nodes, changed=$changedSinceLastDump")
 
             stabilizationJob?.cancel()
             stabilizationJob = launch {
                 delay(STABILIZATION_DEBOUNCE_MS)
-                finalizeIfStillCurrent(formattedTree, nodeCount)
+                finalizeIfStillCurrent(packageName, formattedTree, nodeCount)
             }
         }
     }
 
     fun onForegroundAppChanged(packageName: String) {
-        if (packageName != UBER_PACKAGE_NAME) {
+        if (packageName != activePackageName) {
             stabilizationJob?.cancel()
             hasCompletedThisSession = false
             lastFormattedTree = null
+            activePackageName = if (isKnownRideProviderPackage(packageName)) packageName else null
         }
     }
 
-    private suspend fun finalizeIfStillCurrent(formattedTree: String, nodeCount: Int) {
+    private fun isKnownRideProviderPackage(packageName: String): Boolean =
+        RideProvider.values().any { it.packageName == packageName }
+
+    private suspend fun finalizeIfStillCurrent(packageName: String, formattedTree: String, nodeCount: Int) {
         if (hasCompletedThisSession || formattedTree != lastFormattedTree) return
 
-        Log.d(TAG, "Uber UI stabilized ($nodeCount nodes) - exporting")
-        val exportedPath = uiTreeExporter.exportToDocuments(EXPORT_FILE_NAME, formattedTree)
+        val providerName = KnownForegroundApps.displayNameFor(packageName) ?: packageName
+        Log.d(TAG, "$providerName UI stabilized ($nodeCount nodes) - exporting")
+        val fileName = "${providerName.lowercase()}_ui_tree.txt"
+        val exportedPath = uiTreeExporter.exportToDocuments(fileName, formattedTree)
 
         uiInspectorRepository.updateSnapshot(
             UiInspectorSnapshot(
@@ -102,7 +117,5 @@ class UiInspectorCoordinator @Inject constructor(
     private companion object {
         const val TAG = "UiInspectorCoordinator"
         const val STABILIZATION_DEBOUNCE_MS = 1_500L
-        const val EXPORT_FILE_NAME = "uber_ui_tree.txt"
-        const val UBER_PACKAGE_NAME = "com.ubercab"
     }
 }

@@ -1,17 +1,23 @@
 package com.family.farecompare.domain.automation
 
+import android.graphics.Rect
 import android.util.Log
+import android.view.accessibility.AccessibilityNodeInfo
 import com.family.farecompare.domain.accessibility.AccessibilityStatusChecker
 import com.family.farecompare.domain.connectivity.InternetConnectivityChecker
 import com.family.farecompare.domain.fare.FareExtractor
 import com.family.farecompare.domain.fare.NoRidesAvailableDetector
+import com.family.farecompare.domain.inspector.FailureDiagnosticsRecorder
+import com.family.farecompare.domain.location.DetectedField
 import com.family.farecompare.domain.location.FieldRole
 import com.family.farecompare.domain.location.LocationFieldDetector
 import com.family.farecompare.domain.location.SuggestionSelector
 import com.family.farecompare.domain.model.AutomationFailureReason
 import com.family.farecompare.domain.model.FareQuote
+import com.family.farecompare.domain.model.NodeBounds
 import com.family.farecompare.domain.model.ProviderComparisonOutcome
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
@@ -20,29 +26,41 @@ import kotlinx.coroutines.withTimeoutOrNull
 import javax.inject.Inject
 
 private const val FOREGROUND_WAIT_TIMEOUT_MS = 10_000L
-private const val FIELD_APPEAR_TIMEOUT_MS = 8_000L
-private const val SUGGESTION_APPEAR_TIMEOUT_MS = 8_000L
-private const val FARE_APPEAR_TIMEOUT_MS = 25_000L
+private const val FIELD_APPEAR_TIMEOUT_MS = 12_000L
+private const val CONFIRM_APPEAR_TIMEOUT_MS = 6_000L
+private const val FARE_APPEAR_TIMEOUT_MS = 30_000L
 private const val UI_SETTLE_DELAY_MS = 400L
+private const val MAX_FIELD_RETRIES = 4
+private const val MAX_SCROLL_ATTEMPTS = 3
 
 /**
- * End-to-end automation pipeline for a single [RideAppProvider]:
+ * Explicit per-provider state machine that drives the full ride-booking
+ * automation flow:
  *
- * accessibility check -> installed check -> launch -> wait for foreground
- * -> locate + fill pickup field -> select a matching suggestion -> locate +
- * fill destination field -> select a matching suggestion -> wait for a fare
- * to appear on screen -> extract it -> return to FareCompare.
+ * WAIT_APP -> WAIT_PICKUP_FIELD -> ENTER_PICKUP -> WAIT_PICKUP_CONFIRM ->
+ * WAIT_DESTINATION_FIELD -> ENTER_DESTINATION -> WAIT_DESTINATION_CONFIRM ->
+ * WAIT_FARE_SCREEN -> EXTRACT_FARE -> RETURN_TO_COMPARE_APP -> NEXT_APP
  *
- * Every wait is driven by [WindowContentEventBus] (real accessibility
- * events), never a fixed `delay()` polling loop, except for a very small
- * settle delay after each UI-mutating action to let the target app finish
- * its own animation/layout pass before the next read - this is standard
- * practice for accessibility automation and is bounded, not a substitute
- * for event-driven waiting.
+ * The engine only ever advances to the next state after verifying the
+ * current one actually succeeded (a confirmed pickup field value, a
+ * confirmed destination field value, a fare actually read from screen).
+ * It never moves on to [AutomationState.NEXT_APP] - i.e. never leaves the
+ * current provider app - until both pickup and destination are confirmed,
+ * or a bounded timeout/retry budget is exhausted.
  *
- * This class is provider-agnostic: it depends only on [RideAppProvider],
- * never on Uber/Ola/Rapido-specific code, so adding a fourth provider only
- * requires a new [RideAppProvider] implementation.
+ * Every wait is event-driven via [WindowContentEventBus] (real
+ * accessibility events), never a fixed polling `delay()` loop, aside from a
+ * small bounded settle delay after each UI-mutating action to let the
+ * target app finish its own animation/layout pass - standard practice for
+ * accessibility automation, not a substitute for event-driven waiting.
+ *
+ * Field/suggestion lookup uses multiple strategies in order (text, hint,
+ * content description, resource id, provider-specific hints, then - only
+ * as an explicit last resort - any visible editable field), retries with
+ * backoff, and scrolls the screen when nothing is found. Every failure
+ * triggers [FailureDiagnosticsRecorder] so the *reason* a field wasn't
+ * found is captured (and exported) instead of the engine blindly moving on
+ * or giving up silently.
  */
 class RideAutomationEngine @Inject constructor(
     private val accessibilityStatusChecker: AccessibilityStatusChecker,
@@ -52,8 +70,10 @@ class RideAutomationEngine @Inject constructor(
     private val locationFieldDetector: LocationFieldDetector,
     private val suggestionSelector: SuggestionSelector,
     private val accessibilityActionExecutor: AccessibilityActionExecutor,
+    private val scrollHelper: ScrollHelper,
     private val fareExtractor: FareExtractor,
     private val noRidesAvailableDetector: NoRidesAvailableDetector,
+    private val failureDiagnosticsRecorder: FailureDiagnosticsRecorder,
     private val appReturner: AppReturner
 ) {
     operator fun invoke(
@@ -62,45 +82,72 @@ class RideAutomationEngine @Inject constructor(
         destinationAddress: String
     ): Flow<RideAutomationStep> = flow {
         try {
-            emit(RideAutomationStep.CheckingAccessibility)
+            log(provider, AutomationState.WAIT_APP, "Checking accessibility service")
+            emit(progress(provider, AutomationState.WAIT_APP, "Checking accessibility..."))
             if (!accessibilityStatusChecker.isServiceEnabled()) {
-                emit(finished(provider, AutomationFailureReason.AccessibilityDisabled))
+                emit(fail(provider, AutomationFailureReason.AccessibilityDisabled))
                 return@flow
             }
 
             if (!internetConnectivityChecker.isConnected()) {
-                emit(finished(provider, AutomationFailureReason.NoInternet))
+                emit(fail(provider, AutomationFailureReason.NoInternet))
                 return@flow
             }
 
-            emit(RideAutomationStep.CheckingInstalled)
+            emit(progress(provider, AutomationState.WAIT_APP, "Checking ${provider.displayName} is installed..."))
             if (!provider.isInstalled()) {
-                emit(finished(provider, AutomationFailureReason.AppNotInstalled))
+                emit(fail(provider, AutomationFailureReason.AppNotInstalled))
                 return@flow
             }
 
-            emit(RideAutomationStep.Launching)
+            emit(progress(provider, AutomationState.WAIT_APP, "Launching ${provider.displayName}..."))
             provider.launch()
 
-            emit(RideAutomationStep.WaitingForForeground)
+            log(provider, AutomationState.WAIT_APP, "Waiting for ${provider.displayName} to reach foreground")
             if (!provider.waitUntilForeground(FOREGROUND_WAIT_TIMEOUT_MS)) {
-                emit(finished(provider, AutomationFailureReason.LaunchTimeout))
+                emit(fail(provider, AutomationFailureReason.LaunchTimeout))
                 return@flow
             }
+            log(provider, AutomationState.WAIT_APP, "${provider.displayName} is now the foreground app")
 
-            emit(RideAutomationStep.FillingPickup)
-            if (!fillFieldWithRetry(provider.packageName, FieldRole.PICKUP, pickupAddress)) {
-                emit(finished(provider, AutomationFailureReason.PickupFieldNotFound))
+            // --- Pickup ---
+            val pickupResult = runFieldStates(
+                provider = provider,
+                address = pickupAddress,
+                role = FieldRole.PICKUP,
+                waitFieldState = AutomationState.WAIT_PICKUP_FIELD,
+                enterState = AutomationState.ENTER_PICKUP,
+                confirmState = AutomationState.WAIT_PICKUP_CONFIRM,
+                hints = provider.pickupFieldHints,
+                excludeBounds = null,
+                emit = { emit(it) }
+            )
+            if (pickupResult == null) {
+                emit(fail(provider, AutomationFailureReason.PickupFieldNotFound))
                 return@flow
             }
+            log(provider, AutomationState.WAIT_PICKUP_CONFIRM, "Entered pickup: '$pickupAddress' confirmed")
 
-            emit(RideAutomationStep.FillingDestination)
-            if (!fillFieldWithRetry(provider.packageName, FieldRole.DESTINATION, destinationAddress)) {
-                emit(finished(provider, AutomationFailureReason.DestinationFieldNotFound))
+            // --- Destination: never proceed to NEXT_APP without this succeeding ---
+            val destinationResult = runFieldStates(
+                provider = provider,
+                address = destinationAddress,
+                role = FieldRole.DESTINATION,
+                waitFieldState = AutomationState.WAIT_DESTINATION_FIELD,
+                enterState = AutomationState.ENTER_DESTINATION,
+                confirmState = AutomationState.WAIT_DESTINATION_CONFIRM,
+                hints = provider.destinationFieldHints,
+                excludeBounds = pickupResult,
+                emit = { emit(it) }
+            )
+            if (destinationResult == null) {
+                emit(fail(provider, AutomationFailureReason.DestinationFieldNotFound))
                 return@flow
             }
+            log(provider, AutomationState.WAIT_DESTINATION_CONFIRM, "Entered destination: '$destinationAddress' confirmed")
 
-            emit(RideAutomationStep.WaitingForFare)
+            // --- Fare ---
+            emit(progress(provider, AutomationState.WAIT_FARE_SCREEN, "Waiting for ${provider.displayName} fare..."))
             val quotes = waitForFares(provider)
             if (quotes.isEmpty()) {
                 val rootNode = accessibilityGatewayRepository.currentRootNode()
@@ -109,66 +156,217 @@ class RideAutomationEngine @Inject constructor(
                 } else {
                     AutomationFailureReason.FareNotFoundBeforeTimeout
                 }
-                emit(finished(provider, failureReason))
+                failureDiagnosticsRecorder.captureFailure(provider.displayName, failureReason.javaClass.simpleName, rootNode)
+                emit(fail(provider, failureReason))
                 return@flow
             }
+            log(provider, AutomationState.EXTRACT_FARE, "Extracted ${quotes.size} fare(s)")
+            emit(progress(provider, AutomationState.EXTRACT_FARE, "Fare extracted"))
 
-            emit(RideAutomationStep.ReturningToFareCompare)
+            emit(progress(provider, AutomationState.RETURN_TO_COMPARE_APP, "Returning to FareCompare..."))
             appReturner.bringFareCompareToForeground()
 
+            emit(progress(provider, AutomationState.NEXT_APP, "Done with ${provider.displayName}"))
             emit(RideAutomationStep.Finished(ProviderComparisonOutcome.Success(quotes)))
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (exception: Exception) {
-            Log.e(TAG, "Unexpected error automating ${provider.displayName}: ${exception.message}")
-            emit(finished(provider, AutomationFailureReason.Unexpected(exception.message ?: exception.javaClass.simpleName)))
+            Log.e(TAG, "[${provider.displayName}] Unexpected error: ${exception.message}")
+            failureDiagnosticsRecorder.captureFailure(
+                provider.displayName,
+                "Unexpected: ${exception.message}",
+                accessibilityGatewayRepository.currentRootNode()
+            )
+            emit(fail(provider, AutomationFailureReason.Unexpected(exception.message ?: exception.javaClass.simpleName)))
         }
     }
 
-    private suspend fun fillFieldWithRetry(packageName: String, role: FieldRole, address: String): Boolean {
-        val fieldNode = waitForNode(packageName, FIELD_APPEAR_TIMEOUT_MS) { root ->
-            findEditableFieldNode(root, role)
-        } ?: return false
+    /**
+     * Runs WAIT_*_FIELD -> ENTER_* -> WAIT_*_CONFIRM for one [role].
+     * Returns the bounds of the field that was successfully filled, or
+     * null if it could not be filled after every retry/scroll/fallback
+     * strategy was exhausted - in which case the caller must stop and fail
+     * rather than proceeding to the next state.
+     */
+    private suspend fun runFieldStates(
+        provider: RideAppProvider,
+        address: String,
+        role: FieldRole,
+        waitFieldState: AutomationState,
+        enterState: AutomationState,
+        confirmState: AutomationState,
+        hints: List<String>,
+        excludeBounds: NodeBounds?,
+        emit: suspend (RideAutomationStep) -> Unit
+    ): NodeBounds? {
+        var retryCount = 0
 
-        val setTextSucceeded = accessibilityActionExecutor.setText(fieldNode, address)
-        if (!setTextSucceeded) return false
+        while (retryCount <= MAX_FIELD_RETRIES) {
+            emit(progress(provider, waitFieldState, "Looking for ${role.label()} field...", retryCount))
+            log(provider, waitFieldState, "Attempt ${retryCount + 1}/${MAX_FIELD_RETRIES + 1} to locate ${role.label()} field")
 
-        settle()
+            val fieldLookup = findFieldWithFallbacks(provider, role, hints, excludeBounds, waitFieldState, retryCount)
+            if (fieldLookup == null) {
+                retryCount++
+                continue
+            }
+            val (fieldNode, isPlaceholder) = fieldLookup
 
-        val suggestionRoot = waitForAnyWindowContentChange(packageName, SUGGESTION_APPEAR_TIMEOUT_MS)
-            ?: accessibilityGatewayRepository.currentRootNode()
-            ?: return false
+            if (isPlaceholder) {
+                log(provider, enterState, "Tapping placeholder to reveal ${role.label()} text input")
+                if (!accessibilityActionExecutor.click(fieldNode)) {
+                    log(provider, enterState, "Failed to click ${role.label()} placeholder, retrying")
+                    retryCount++
+                    continue
+                }
+                settle()
+                waitForAnyWindowContentChange(provider.packageName, FIELD_APPEAR_TIMEOUT_MS)
+                // After tapping the placeholder, re-search for the now-real editable field.
+                retryCount++
+                continue
+            }
 
-        val suggestionNode = suggestionSelector.findBestSuggestion(suggestionRoot, address) ?: return false
-        val clicked = accessibilityActionExecutor.click(suggestionNode)
-        if (clicked) settle()
-        return clicked
+            emit(progress(provider, enterState, "Entering ${role.label()}: $address", retryCount))
+            val setTextSucceeded = accessibilityActionExecutor.setText(fieldNode, address)
+            if (!setTextSucceeded) {
+                log(provider, enterState, "setText failed on ${role.label()} field, retrying")
+                retryCount++
+                continue
+            }
+            log(provider, enterState, "Entered ${role.label()}: '$address'")
+            settle()
+
+            emit(progress(provider, confirmState, "Confirming ${role.label()}...", retryCount))
+            val suggestionRoot = waitForAnyWindowContentChange(provider.packageName, CONFIRM_APPEAR_TIMEOUT_MS)
+                ?: accessibilityGatewayRepository.currentRootNode()
+
+            val fieldBounds = boundsOf(fieldNode)
+
+            if (suggestionRoot == null) {
+                log(provider, confirmState, "No window content available after entering ${role.label()}, retrying")
+                retryCount++
+                continue
+            }
+
+            val suggestionNode = suggestionSelector.findBestSuggestion(suggestionRoot, address)
+            if (suggestionNode == null) {
+                log(provider, confirmState, "No matching suggestion found for ${role.label()}, retrying")
+                retryCount++
+                continue
+            }
+
+            val clicked = accessibilityActionExecutor.click(suggestionNode)
+            if (!clicked) {
+                log(provider, confirmState, "Failed to click suggestion for ${role.label()}, retrying")
+                retryCount++
+                continue
+            }
+            settle()
+            log(provider, confirmState, "${role.label()} confirmed via suggestion tap")
+            return fieldBounds
+        }
+
+        log(provider, confirmState, "Giving up on ${role.label()} after $retryCount attempts")
+        val rootNode = accessibilityGatewayRepository.currentRootNode()
+        val diagnostics = failureDiagnosticsRecorder.captureFailure(
+            provider.displayName,
+            "${role.label()}FieldNotFound",
+            rootNode
+        )
+        log(
+            provider,
+            waitFieldState,
+            "Diagnostics: ${diagnostics.totalNodeCount} nodes, " +
+                "${diagnostics.editableFieldDescriptions.size} editable fields present " +
+                "(exported: ${diagnostics.exportedFilePath ?: "n/a"})"
+        )
+        return null
     }
 
     /**
-     * The generic [LocationFieldDetector] returns a text summary, not the
-     * live node - re-walk the tree here to get the actual editable
-     * [android.view.accessibility.AccessibilityNodeInfo] to act on. Kept
-     * private to this engine since only automation (not the read-only
-     * pickup-detection dashboard) needs the live node reference.
+     * Tries, in order: keyword-matched editable field -> scroll and retry
+     * keyword search -> provider-hinted clickable placeholder (e.g. Uber's
+     * "Where to?") -> as a last resort on later retries only, any visible
+     * editable field that isn't the one already used for the other role.
+     * Returns the found node plus whether it was a placeholder (needs a
+     * tap before text entry) rather than a real text field.
      */
-    private fun findEditableFieldNode(
-        rootNode: android.view.accessibility.AccessibilityNodeInfo,
-        role: FieldRole
-    ): android.view.accessibility.AccessibilityNodeInfo? {
-        val detected = locationFieldDetector.detectField(rootNode, role) ?: return null
-        return locateNodeByValueAndBounds(rootNode, detected.value, detected.bounds, depth = 0)
+    private suspend fun findFieldWithFallbacks(
+        provider: RideAppProvider,
+        role: FieldRole,
+        hints: List<String>,
+        excludeBounds: NodeBounds?,
+        state: AutomationState,
+        retryCount: Int
+    ): Pair<AccessibilityNodeInfo, Boolean>? {
+        val root = accessibilityGatewayRepository.currentRootNode()
+        if (root == null) {
+            log(provider, state, "No root node available yet")
+            waitForAnyWindowContentChange(provider.packageName, FIELD_APPEAR_TIMEOUT_MS / (MAX_FIELD_RETRIES + 1))
+            return null
+        }
+
+        val detected = locationFieldDetector.detectField(root, role, hints)
+        if (detected != null) {
+            val node = locateNodeByValueAndBounds(root, detected.value, detected.bounds, depth = 0)
+            if (node != null) {
+                log(provider, state, "Node found by keyword search for ${role.label()} (resourceId=${detected.resourceId ?: "-"})")
+                return node to false
+            }
+        }
+        log(provider, state, "Node NOT found by keyword search for ${role.label()}")
+
+        if (retryCount < MAX_SCROLL_ATTEMPTS) {
+            val scrolled = scrollHelper.scrollForward(root)
+            log(provider, state, "Scroll attempt for ${role.label()} field: ${if (scrolled) "scrolled" else "nothing scrollable"}")
+            if (scrolled) {
+                settle()
+                waitForAnyWindowContentChange(provider.packageName, FIELD_APPEAR_TIMEOUT_MS / (MAX_FIELD_RETRIES + 1))
+                val rescanRoot = accessibilityGatewayRepository.currentRootNode() ?: return null
+                val afterScroll = locationFieldDetector.detectField(rescanRoot, role, hints)
+                if (afterScroll != null) {
+                    val node = locateNodeByValueAndBounds(rescanRoot, afterScroll.value, afterScroll.bounds, depth = 0)
+                    if (node != null) {
+                        log(provider, state, "Node found after scrolling for ${role.label()}")
+                        return node to false
+                    }
+                }
+            }
+        }
+
+        val placeholder = locationFieldDetector.findClickablePlaceholder(root, role, hints)
+        if (placeholder != null) {
+            val node = locateNodeByValueAndBounds(root, placeholder.value, placeholder.bounds, depth = 0)
+            if (node != null) {
+                log(provider, state, "Clickable placeholder found for ${role.label()}, will tap to reveal text field")
+                return node to true
+            }
+        }
+
+        if (retryCount >= MAX_FIELD_RETRIES - 1) {
+            val fallback = locationFieldDetector.findAnyEditableField(root, excludeBounds)
+            if (fallback != null) {
+                val node = locateNodeByValueAndBounds(root, fallback.value, fallback.bounds, depth = 0)
+                if (node != null) {
+                    log(provider, state, "Falling back to any visible editable field for ${role.label()} as last resort")
+                    return node to false
+                }
+            }
+        }
+
+        waitForAnyWindowContentChange(provider.packageName, FIELD_APPEAR_TIMEOUT_MS / (MAX_FIELD_RETRIES + 1))
+        return null
     }
 
     private fun locateNodeByValueAndBounds(
-        node: android.view.accessibility.AccessibilityNodeInfo?,
+        node: AccessibilityNodeInfo?,
         value: String,
-        bounds: com.family.farecompare.domain.model.NodeBounds,
+        bounds: NodeBounds,
         depth: Int
-    ): android.view.accessibility.AccessibilityNodeInfo? {
+    ): AccessibilityNodeInfo? {
         if (node == null || depth > MAX_NODE_SEARCH_DEPTH) return null
 
-        val nodeBounds = android.graphics.Rect()
+        val nodeBounds = Rect()
         node.getBoundsInScreen(nodeBounds)
         val matchesBounds = nodeBounds.left == bounds.left && nodeBounds.top == bounds.top &&
             nodeBounds.right == bounds.right && nodeBounds.bottom == bounds.bottom
@@ -183,6 +381,12 @@ class RideAutomationEngine @Inject constructor(
         return null
     }
 
+    private fun boundsOf(node: AccessibilityNodeInfo): NodeBounds {
+        val rect = Rect()
+        node.getBoundsInScreen(rect)
+        return NodeBounds(rect.left, rect.top, rect.right, rect.bottom)
+    }
+
     private suspend fun waitForFares(provider: RideAppProvider): List<FareQuote> {
         val timestamp = System.currentTimeMillis()
         val deadline = System.currentTimeMillis() + FARE_APPEAR_TIMEOUT_MS
@@ -192,6 +396,7 @@ class RideAutomationEngine @Inject constructor(
             if (rootNode != null) {
                 val detectedFares = fareExtractor.extractFares(rootNode)
                 if (detectedFares.isNotEmpty()) {
+                    log(provider, AutomationState.WAIT_FARE_SCREEN, "Fare screen detected with ${detectedFares.size} quote(s)")
                     return detectedFares.map { detected ->
                         FareQuote(
                             provider = com.family.farecompare.domain.model.RideProvider.values()
@@ -210,28 +415,11 @@ class RideAutomationEngine @Inject constructor(
         return emptyList()
     }
 
-    private suspend fun waitForNode(
-        packageName: String,
-        timeoutMs: Long,
-        finder: (android.view.accessibility.AccessibilityNodeInfo) -> android.view.accessibility.AccessibilityNodeInfo?
-    ): android.view.accessibility.AccessibilityNodeInfo? {
-        val deadline = System.currentTimeMillis() + timeoutMs
-
-        accessibilityGatewayRepository.currentRootNode()?.let { root -> finder(root)?.let { return it } }
-
-        while (System.currentTimeMillis() < deadline) {
-            waitForAnyWindowContentChange(packageName, remainingTime(deadline))
-            val root = accessibilityGatewayRepository.currentRootNode() ?: continue
-            finder(root)?.let { return it }
-        }
-        return null
-    }
-
     private suspend fun waitForAnyWindowContentChange(
         packageName: String,
         timeoutMs: Long
-    ): android.view.accessibility.AccessibilityNodeInfo? {
-        if (timeoutMs <= 0) return null
+    ): AccessibilityNodeInfo? {
+        if (timeoutMs <= 0) return accessibilityGatewayRepository.currentRootNode()
         withTimeoutOrNull(timeoutMs) {
             windowContentEventBus.events.filter { it.packageName == packageName }.first()
         }
@@ -240,12 +428,25 @@ class RideAutomationEngine @Inject constructor(
 
     private fun remainingTime(deadline: Long): Long = (deadline - System.currentTimeMillis()).coerceAtLeast(0)
 
-    private suspend fun settle() = kotlinx.coroutines.delay(UI_SETTLE_DELAY_MS)
+    private suspend fun settle() = delay(UI_SETTLE_DELAY_MS)
 
-    private fun finished(provider: RideAppProvider, reason: AutomationFailureReason): RideAutomationStep {
+    private fun progress(provider: RideAppProvider, state: AutomationState, message: String, retryCount: Int = 0): RideAutomationStep =
+        RideAutomationStep.InProgress(state = state, message = message, retryCount = retryCount)
+
+    private fun fail(provider: RideAppProvider, reason: AutomationFailureReason): RideAutomationStep {
         val rideProvider = com.family.farecompare.domain.model.RideProvider.values()
             .first { it.packageName == provider.packageName }
+        log(provider, AutomationState.NEXT_APP, "Failed: ${reason.javaClass.simpleName}")
         return RideAutomationStep.Finished(ProviderComparisonOutcome.Failure(rideProvider, reason))
+    }
+
+    private fun FieldRole.label(): String = when (this) {
+        FieldRole.PICKUP -> "pickup"
+        FieldRole.DESTINATION -> "destination"
+    }
+
+    private fun log(provider: RideAppProvider, state: AutomationState, message: String) {
+        Log.d(TAG, "[${provider.displayName}] [$state] $message")
     }
 
     private companion object {

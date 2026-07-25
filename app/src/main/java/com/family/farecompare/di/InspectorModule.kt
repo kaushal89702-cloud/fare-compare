@@ -28,4 +28,14 @@ abstract class InspectorModule {
 
     @Binds
     abstract fun bindAppReturner(impl: SelfAppReturnerImpl): AppReturner
+
+    @Binds
+    abstract fun bindFailureDiagnosticsRecorder(
+        impl: com.family.farecompare.data.inspector.FailureDiagnosticsRecorderImpl
+    ): com.family.farecompare.domain.inspector.FailureDiagnosticsRecorder
+
+    @Binds
+    abstract fun bindClickableNodeInspector(
+        impl: com.family.farecompare.data.inspector.ClickableNodeInspectorImpl
+    ): com.family.farecompare.domain.inspector.ClickableNodeInspector
 }

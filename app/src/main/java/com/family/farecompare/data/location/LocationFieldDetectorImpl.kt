@@ -15,7 +15,8 @@ import javax.inject.Inject
  *
  * - Is the node actually editable (an input, not a label)
  * - Does its text / hint / content description / resource id contain a
- *   role-specific keyword ("pickup", "current location", "where to", etc.)
+ *   role-specific keyword ("pickup", "current location", "where to", etc.),
+ *   plus any provider-supplied [DetectedField]-independent extra keywords
  * - Do nearby sibling nodes carry a matching label
  * - Is the node positioned in the upper portion of the screen (pickup
  *   fields conventionally precede destination fields; this bonus is only
@@ -23,53 +24,135 @@ import javax.inject.Inject
  * - How shallow is the node in the hierarchy (mild preference)
  *
  * No resource IDs, class names, or layouts specific to Uber, Ola, or Rapido
- * are referenced, so this same implementation works for all of them.
+ * are hardcoded here - provider wording differences are supplied by the
+ * caller via `additionalKeywords`, keeping this implementation shared.
  */
 class LocationFieldDetectorImpl @Inject constructor() : LocationFieldDetector {
 
-    override fun detectField(rootNode: AccessibilityNodeInfo, role: FieldRole): DetectedField? {
+    override fun detectField(
+        rootNode: AccessibilityNodeInfo,
+        role: FieldRole,
+        additionalKeywords: List<String>
+    ): DetectedField? {
+        val keywords = keywordsFor(role) + additionalKeywords.map { it.lowercase() }
         val candidates = mutableListOf<ScoredCandidate>()
-        collectCandidates(rootNode, depth = 0, role = role, candidates = candidates)
+        collectEditableCandidates(rootNode, depth = 0, role = role, keywords = keywords, candidates = candidates)
 
         val best = candidates.maxByOrNull { it.score } ?: return null
         if (best.score < MINIMUM_SCORE_THRESHOLD) return null
 
-        val confidence = ((best.score.toDouble() / MAX_POSSIBLE_SCORE) * 100)
-            .toInt()
-            .coerceIn(0, 100)
-
-        return DetectedField(
-            value = best.value,
-            confidenceScore = confidence,
-            bounds = best.bounds,
-            resourceId = best.resourceId
-        )
+        return best.toDetectedField()
     }
 
-    private fun collectCandidates(
+    override fun findClickablePlaceholder(
+        rootNode: AccessibilityNodeInfo,
+        role: FieldRole,
+        additionalKeywords: List<String>
+    ): DetectedField? {
+        val keywords = keywordsFor(role) + additionalKeywords.map { it.lowercase() }
+        val candidates = mutableListOf<ScoredCandidate>()
+        collectClickablePlaceholderCandidates(rootNode, depth = 0, keywords = keywords, candidates = candidates)
+
+        val best = candidates.maxByOrNull { it.score } ?: return null
+        if (best.score < MINIMUM_PLACEHOLDER_SCORE_THRESHOLD) return null
+
+        return best.toDetectedField()
+    }
+
+    override fun findAnyEditableField(rootNode: AccessibilityNodeInfo, excludeBounds: NodeBounds?): DetectedField? {
+        val candidates = mutableListOf<ScoredCandidate>()
+        collectAnyEditable(rootNode, depth = 0, excludeBounds = excludeBounds, candidates = candidates)
+
+        // Prefer a still-blank field (no text yet) since a field the user
+        // already filled for another role is a poor fallback target; fall
+        // back to any editable field if every candidate already has text.
+        val best = candidates.filter { it.isBlank }.maxByOrNull { it.score }
+            ?: candidates.maxByOrNull { it.score }
+            ?: return null
+
+        return best.toDetectedField()
+    }
+
+    private fun collectEditableCandidates(
         node: AccessibilityNodeInfo?,
         depth: Int,
         role: FieldRole,
+        keywords: List<String>,
         candidates: MutableList<ScoredCandidate>
     ) {
         if (node == null || depth > MAX_TRAVERSAL_DEPTH) return
 
-        val isEditableLike = node.isEditable ||
-            node.className?.toString()?.contains("EditText", ignoreCase = true) == true
-
-        if (isEditableLike) {
-            scoreCandidate(node, depth, role)?.let { candidates.add(it) }
+        if (isEditableLike(node)) {
+            scoreEditableCandidate(node, depth, role, keywords)?.let { candidates.add(it) }
         }
 
         for (i in 0 until node.childCount) {
-            collectCandidates(node.getChild(i), depth + 1, role, candidates)
+            collectEditableCandidates(node.getChild(i), depth + 1, role, keywords, candidates)
         }
     }
 
-    private fun scoreCandidate(node: AccessibilityNodeInfo, depth: Int, role: FieldRole): ScoredCandidate? {
+    private fun collectClickablePlaceholderCandidates(
+        node: AccessibilityNodeInfo?,
+        depth: Int,
+        keywords: List<String>,
+        candidates: MutableList<ScoredCandidate>
+    ) {
+        if (node == null || depth > MAX_TRAVERSAL_DEPTH) return
+
+        if (!isEditableLike(node) && node.isVisibleToUser && (node.isClickable || node.isFocusable)) {
+            scorePlaceholderCandidate(node, depth, keywords)?.let { candidates.add(it) }
+        }
+
+        for (i in 0 until node.childCount) {
+            collectClickablePlaceholderCandidates(node.getChild(i), depth + 1, keywords, candidates)
+        }
+    }
+
+    private fun collectAnyEditable(
+        node: AccessibilityNodeInfo?,
+        depth: Int,
+        excludeBounds: NodeBounds?,
+        candidates: MutableList<ScoredCandidate>
+    ) {
+        if (node == null || depth > MAX_TRAVERSAL_DEPTH) return
+
+        if (isEditableLike(node) && node.isVisibleToUser) {
+            val bounds = Rect()
+            node.getBoundsInScreen(bounds)
+            val nodeBounds = NodeBounds(bounds.left, bounds.top, bounds.right, bounds.bottom)
+            if (excludeBounds == null || nodeBounds != excludeBounds) {
+                val text = node.text?.toString().orEmpty()
+                val hint = node.hintText?.toString().orEmpty()
+                val contentDescription = node.contentDescription?.toString().orEmpty()
+                val value = text.ifBlank { hint }.ifBlank { contentDescription }.ifBlank { "(empty field)" }
+                candidates.add(
+                    ScoredCandidate(
+                        value = value,
+                        score = (DEPTH_BONUS_MAX - depth).coerceIn(0, DEPTH_BONUS_MAX) + EDITABLE_WEIGHT,
+                        bounds = nodeBounds,
+                        resourceId = node.viewIdResourceName,
+                        isBlank = text.isBlank()
+                    )
+                )
+            }
+        }
+
+        for (i in 0 until node.childCount) {
+            collectAnyEditable(node.getChild(i), depth + 1, excludeBounds, candidates)
+        }
+    }
+
+    private fun isEditableLike(node: AccessibilityNodeInfo): Boolean =
+        node.isEditable || node.className?.toString()?.contains("EditText", ignoreCase = true) == true
+
+    private fun scoreEditableCandidate(
+        node: AccessibilityNodeInfo,
+        depth: Int,
+        role: FieldRole,
+        keywords: List<String>
+    ): ScoredCandidate? {
         if (!node.isVisibleToUser) return null
 
-        val keywords = keywordsFor(role)
         val text = node.text?.toString().orEmpty()
         val hint = node.hintText?.toString().orEmpty()
         val contentDescription = node.contentDescription?.toString().orEmpty()
@@ -103,7 +186,39 @@ class LocationFieldDetectorImpl @Inject constructor() : LocationFieldDetector {
             value = value,
             score = score,
             bounds = NodeBounds(bounds.left, bounds.top, bounds.right, bounds.bottom),
-            resourceId = resourceId.ifBlank { null }
+            resourceId = resourceId.ifBlank { null },
+            isBlank = text.isBlank()
+        )
+    }
+
+    private fun scorePlaceholderCandidate(
+        node: AccessibilityNodeInfo,
+        depth: Int,
+        keywords: List<String>
+    ): ScoredCandidate? {
+        val text = node.text?.toString().orEmpty()
+        val contentDescription = node.contentDescription?.toString().orEmpty()
+        val resourceId = node.viewIdResourceName.orEmpty()
+
+        var score = 0
+        score += keywordScore(text, keywords, TEXT_KEYWORD_WEIGHT)
+        score += keywordScore(contentDescription, keywords, DESCRIPTION_KEYWORD_WEIGHT)
+        score += keywordScore(resourceId, keywords, RESOURCE_ID_KEYWORD_WEIGHT)
+        if (node.isClickable) score += EDITABLE_WEIGHT / 2
+        score += (DEPTH_BONUS_MAX - depth).coerceIn(0, DEPTH_BONUS_MAX)
+
+        if (score <= 0) return null
+        val value = text.ifBlank { contentDescription }
+        if (value.isBlank()) return null
+
+        val bounds = Rect()
+        node.getBoundsInScreen(bounds)
+        return ScoredCandidate(
+            value = value,
+            score = score,
+            bounds = NodeBounds(bounds.left, bounds.top, bounds.right, bounds.bottom),
+            resourceId = resourceId.ifBlank { null },
+            isBlank = true
         )
     }
 
@@ -147,8 +262,14 @@ class LocationFieldDetectorImpl @Inject constructor() : LocationFieldDetector {
         val value: String,
         val score: Int,
         val bounds: NodeBounds,
-        val resourceId: String?
-    )
+        val resourceId: String?,
+        val isBlank: Boolean
+    ) {
+        fun toDetectedField(): DetectedField {
+            val confidence = ((score.toDouble() / MAX_POSSIBLE_SCORE) * 100).toInt().coerceIn(0, 100)
+            return DetectedField(value = value, confidenceScore = confidence, bounds = bounds, resourceId = resourceId)
+        }
+    }
 
     private companion object {
         val PICKUP_KEYWORDS = listOf(
@@ -191,6 +312,7 @@ class LocationFieldDetectorImpl @Inject constructor() : LocationFieldDetector {
             NEARBY_LABEL_WEIGHT + POSITION_WEIGHT + DEPTH_BONUS_MAX
 
         const val MINIMUM_SCORE_THRESHOLD = 35
+        const val MINIMUM_PLACEHOLDER_SCORE_THRESHOLD = 20
         const val MAX_TRAVERSAL_DEPTH = 60
     }
 }

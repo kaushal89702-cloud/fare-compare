@@ -35,4 +35,9 @@ abstract class AutomationModule {
 
     @Binds
     abstract fun bindAccessibilityActionExecutor(impl: AccessibilityActionExecutorImpl): AccessibilityActionExecutor
+
+    @Binds
+    abstract fun bindScrollHelper(
+        impl: com.family.farecompare.data.automation.ScrollHelperImpl
+    ): com.family.farecompare.domain.automation.ScrollHelper
 }
