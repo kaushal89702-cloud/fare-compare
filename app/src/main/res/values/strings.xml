@@ -16,4 +16,5 @@
     <string name="accessibility_settings_description">Fare Compare needs the Accessibility Service enabled to read fares from Uber, Ola, and Rapido on your device.</string>
     <string name="enable_accessibility_button">Enable Accessibility Service</string>
     <string name="accessibility_service_description">Allows Fare Compare to read ride fare information from Uber, Ola, and Rapido once enabled in Accessibility Settings.</string>
+    <string name="current_application_title">Current Application</string>
 </resources>

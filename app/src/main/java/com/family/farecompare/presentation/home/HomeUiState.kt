@@ -1,6 +1,7 @@
 package com.family.farecompare.presentation.home
 
 import com.family.farecompare.domain.model.FareResult
+import com.family.farecompare.domain.model.ForegroundApp
 import com.family.farecompare.domain.model.RideProvider
 
 data class HomeUiState(
@@ -9,6 +10,7 @@ data class HomeUiState(
     val isPickupTouched: Boolean = false,
     val isDestinationTouched: Boolean = false,
     val isAccessibilityEnabled: Boolean = false,
+    val currentForegroundApp: ForegroundApp? = null,
     val fareResults: List<FareResult> = RideProvider.values().map { FareResult(provider = it) }
 ) {
     val isPickupError: Boolean get() = isPickupTouched && pickup.isBlank()

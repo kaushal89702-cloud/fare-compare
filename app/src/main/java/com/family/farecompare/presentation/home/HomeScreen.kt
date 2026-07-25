@@ -36,6 +36,7 @@ import com.family.farecompare.R
 import com.family.farecompare.domain.model.FareResult
 import com.family.farecompare.domain.model.RideProvider
 import com.family.farecompare.presentation.common.OnResume
+import com.family.farecompare.presentation.components.CurrentAppCard
 import com.family.farecompare.presentation.components.FareResultCard
 import com.family.farecompare.presentation.theme.FareCompareTheme
 
@@ -105,6 +106,8 @@ private fun HomeScreenContent(
             },
             style = MaterialTheme.typography.bodyMedium
         )
+
+        CurrentAppCard(currentAppDisplayName = uiState.currentForegroundApp?.displayName)
 
         OutlinedTextField(
             value = uiState.pickup,

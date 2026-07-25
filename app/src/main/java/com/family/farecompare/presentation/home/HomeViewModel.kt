@@ -1,17 +1,22 @@
 package com.family.farecompare.presentation.home
 
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
 import com.family.farecompare.domain.accessibility.AccessibilityStatusChecker
+import com.family.farecompare.domain.foreground.ForegroundAppRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
 import javax.inject.Inject
 
 @HiltViewModel
 class HomeViewModel @Inject constructor(
-    private val accessibilityStatusChecker: AccessibilityStatusChecker
+    private val accessibilityStatusChecker: AccessibilityStatusChecker,
+    foregroundAppRepository: ForegroundAppRepository
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(HomeUiState())
@@ -19,6 +24,9 @@ class HomeViewModel @Inject constructor(
 
     init {
         refreshAccessibilityStatus()
+        foregroundAppRepository.currentForegroundApp
+            .onEach { app -> _uiState.update { it.copy(currentForegroundApp = app) } }
+            .launchIn(viewModelScope)
     }
 
     fun refreshAccessibilityStatus() {
