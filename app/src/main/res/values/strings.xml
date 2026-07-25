@@ -1,4 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Fare Compare</string>
+    <string name="home_title">Fare Compare</string>
+    <string name="pickup_label">Pickup</string>
+    <string name="destination_label">Destination</string>
+    <string name="compare_button">Compare Fares</string>
+    <string name="fare_placeholder">--</string>
 </resources>
